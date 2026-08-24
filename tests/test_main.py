@@ -126,6 +126,7 @@ async def test_waits_between_consecutive_messages_for_same_friend(monkeypatch, t
     chat = MagicMock()
     chat.open_target = AsyncMock()
     send_message = AsyncMock()
+    notify = AsyncMock()
     sleeps = []
 
     async def fake_sleep(seconds):
@@ -142,9 +143,14 @@ async def test_waits_between_consecutive_messages_for_same_friend(monkeypatch, t
     monkeypatch.setattr("asyncio.sleep", fake_sleep)
     monkeypatch.setattr(main_module, "_screenshot", AsyncMock(return_value=None))
     monkeypatch.setattr(main_module, "_write_results", MagicMock())
-    monkeypatch.setattr(main_module, "_notify_dingtalk", AsyncMock())
+    monkeypatch.setattr(main_module, "_notify_dingtalk", notify)
     monkeypatch.setattr(main_module, "_configure_logging", lambda _path, _aliases=None: None)
 
-    assert await main_module.run() == 0
+    assert await main_module.run() == 1
     assert send_message.await_count == 2
     assert sleeps == [0.5]
+    history.mark_success.assert_not_called()
+    results = notify.await_args.args[3]
+    assert [(result.status, result.sent, result.error) for result in results] == [
+        ("unknown", 2, "页面已触发发送，无法确认服务器已接收")
+    ]

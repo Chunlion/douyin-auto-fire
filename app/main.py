@@ -84,13 +84,21 @@ async def run(dry_run: bool = False, env_file: str | None = None) -> int:
                                     history.reserve(key)
                                 await verify_login(page, timeout_ms=3_000)
                                 await send_message(page, chat, message, task.stickers)
-                                if task.prevent_duplicates:
-                                    history.mark_success(key)
                                 sent += 1
-                                LOGGER.info("已确认发送: %s #%d", alias, message_index + 1)
+                                LOGGER.info("已触发发送，送达待确认: %s #%d", alias, message_index + 1)
                                 if message_index < len(target.messages) - 1:
                                     await asyncio.sleep(random.uniform(task.interval_min, task.interval_max))
-                        results.append(TargetResult(target=target.name, status="success", sent=sent, target_alias=alias))
+                        status = "unknown" if not dry_run and sent else "success"
+                        error = "页面已触发发送，无法确认服务器已接收" if status == "unknown" else None
+                        results.append(
+                            TargetResult(
+                                target=target.name,
+                                status=status,
+                                sent=sent,
+                                error=error,
+                                target_alias=alias,
+                            )
+                        )
                     except (AuthenticationError, RiskControlError) as exc:
                         LOGGER.exception("处理好友时登录状态失效: %s", alias)
                         screenshot = await _screenshot(page, settings.artifacts_dir, alias)
@@ -139,11 +147,12 @@ async def run(dry_run: bool = False, env_file: str | None = None) -> int:
     await _notify_dingtalk(settings, task.task_id, dry_run, results, screenshots)
     await _notify_wecom(settings, task.task_id, dry_run, results, screenshots)
     succeeded = sum(result.status == "success" for result in results)
+    unknown = sum(result.status == "unknown" for result in results)
     failed = sum(result.status == "failed" for result in results)
-    LOGGER.info("执行结束: 成功 %d，失败 %d", succeeded, failed)
+    LOGGER.info("执行结束: 成功 %d，待确认 %d，失败 %d", succeeded, unknown, failed)
     if fatal_error is not None:
         raise fatal_error
-    return 1 if failed else 0
+    return 1 if failed or unknown else 0
 
 
 def main() -> int:

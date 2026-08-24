@@ -109,10 +109,26 @@ def test_markdown_lists_successes_failures_and_screenshots(monkeypatch) -> None:
     assert "成功名单（1）" in markdown
     assert "**好友A** - 已发送 2 条" in markdown
     assert "失败名单（1）" in markdown
-    assert "**好友B**，已发送 1 条" in markdown
+    assert "**好友B**，已触发 1 条" in markdown
     assert "发送失败 请重试" in markdown
     assert "`friend-b.png`" in markdown
     assert "https://github.com/owner/repo/actions/runs/123" in markdown
+
+
+def test_markdown_marks_unverified_delivery_as_pending() -> None:
+    title, markdown = build_dingtalk_markdown(
+        "daily-streak",
+        False,
+        [TargetResult(target="好友A", status="unknown", sent=1)],
+        [],
+        finished_at=datetime(2026, 8, 9, 8, 0, tzinfo=timezone.utc),
+    )
+
+    assert title == "抖音自动发送：发送结果待确认"
+    assert "结果**：成功 0 人，待确认 1 人，失败 0 人" in markdown
+    assert "待确认名单（1）" in markdown
+    assert "**好友A** - 已触发 1 条，送达未确认" in markdown
+    assert "已发送" not in markdown
 
 
 def test_markdown_does_not_link_sensitive_artifacts_by_default(monkeypatch) -> None:

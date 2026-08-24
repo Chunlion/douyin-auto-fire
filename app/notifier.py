@@ -61,8 +61,9 @@ def build_dingtalk_markdown(
     finished_at: datetime | None = None,
 ) -> tuple[str, str]:
     successes = [result for result in results if result.status == "success"]
+    unknowns = [result for result in results if result.status == "unknown"]
     failures = [result for result in results if result.status == "failed"]
-    status = "全部成功" if not failures else "存在失败"
+    status = "存在失败" if failures else "发送结果待确认" if unknowns else "全部成功"
     mode = "检查模式（未发送消息）" if dry_run else "正式发送"
     finished = (finished_at or datetime.now(timezone.utc)).astimezone(NOTIFY_TIMEZONE).strftime("%Y-%m-%d %H:%M:%S %z")
     title = f"抖音自动发送：{status}"
@@ -72,7 +73,7 @@ def build_dingtalk_markdown(
         f"> **任务**：{_markdown_text(task_id, limit=100)}  ",
         f"> **模式**：{mode}  ",
         f"> **完成时间**：{finished}  ",
-        f"> **结果**：成功 {len(successes)} 人，失败 {len(failures)} 人",
+        f"> **结果**：成功 {len(successes)} 人，待确认 {len(unknowns)} 人，失败 {len(failures)} 人",
         "",
         f"#### 成功名单（{len(successes)}）",
     ]
@@ -85,11 +86,20 @@ def build_dingtalk_markdown(
     else:
         lines.append("无")
 
+    lines.extend(["", f"#### 待确认名单（{len(unknowns)}）"])
+    if unknowns:
+        for index, result in enumerate(unknowns[:MAX_RESULTS_PER_SECTION], 1):
+            lines.append(f"{index}. **{_markdown_text(result.target, limit=100)}** - 已触发 {result.sent} 条，送达未确认")
+        if len(unknowns) > MAX_RESULTS_PER_SECTION:
+            lines.append(f"- 其余 {len(unknowns) - MAX_RESULTS_PER_SECTION} 人已省略")
+    else:
+        lines.append("无")
+
     lines.extend(["", f"#### 失败名单（{len(failures)}）"])
     if failures:
         for index, result in enumerate(failures[:MAX_RESULTS_PER_SECTION], 1):
             error = _markdown_text(result.error or "未知错误", limit=300)
-            sent = f"，已发送 {result.sent} 条" if result.sent else ""
+            sent = f"，已触发 {result.sent} 条" if result.sent else ""
             lines.append(f"{index}. **{_markdown_text(result.target, limit=100)}**{sent}")
             lines.append(f"   - 原因：{error}")
         if len(failures) > MAX_RESULTS_PER_SECTION:
