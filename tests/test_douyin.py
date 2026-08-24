@@ -2,8 +2,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.douyin import DouyinChat, PageOperationError
-from app.selectors import CHAT_PANEL_MARKERS, MESSAGE_INPUTS
+from app.douyin import AmbiguousTargetError, DouyinChat, PageOperationError
+from app.selectors import CHAT_HEADER_TITLES, CURRENT_CONVERSATIONS, MESSAGE_INPUTS
 
 
 @pytest.mark.asyncio
@@ -26,46 +26,66 @@ async def test_search_failure_raises_without_page_text_or_real_name(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_search_result_accepts_visible_partial_text() -> None:
+async def test_search_result_accepts_single_visible_exact_text() -> None:
     page = MagicMock()
     rows = MagicMock()
     page.locator.return_value.filter.return_value = rows
     rows.count = AsyncMock(return_value=0)
     exact = MagicMock()
-    partial = MagicMock()
-    page.get_by_text.side_effect = [exact, partial]
-    exact.count = AsyncMock(return_value=0)
-    partial.count = AsyncMock(return_value=1)
+    page.get_by_text.return_value = exact
+    exact.count = AsyncMock(return_value=1)
     candidate = MagicMock()
     candidate.is_visible = AsyncMock(return_value=True)
-    partial.nth.return_value = candidate
+    exact.nth.return_value = candidate
 
     result = await DouyinChat(page)._search_result("好友")
 
     assert result is candidate
+    page.get_by_text.assert_called_once_with("好友", exact=True)
 
 
 @pytest.mark.asyncio
-async def test_search_result_ignores_hidden_exact_match() -> None:
+async def test_search_result_rejects_multiple_visible_exact_matches() -> None:
     page = MagicMock()
     rows = MagicMock()
     page.locator.return_value.filter.return_value = rows
     rows.count = AsyncMock(return_value=0)
     exact = MagicMock()
-    partial = MagicMock()
-    page.get_by_text.side_effect = [exact, partial]
-    exact.count = AsyncMock(return_value=1)
-    hidden = MagicMock()
-    hidden.is_visible = AsyncMock(return_value=False)
-    exact.nth.return_value = hidden
-    partial.count = AsyncMock(return_value=1)
-    visible = MagicMock()
-    visible.is_visible = AsyncMock(return_value=True)
-    partial.nth.return_value = visible
+    page.get_by_text.return_value = exact
+    exact.count = AsyncMock(return_value=2)
+    first = MagicMock()
+    first.is_visible = AsyncMock(return_value=True)
+    second = MagicMock()
+    second.is_visible = AsyncMock(return_value=True)
+    exact.nth.side_effect = [first, second]
 
-    result = await DouyinChat(page)._search_result("好友")
+    with pytest.raises(AmbiguousTargetError, match="多个同名"):
+        await DouyinChat(page)._search_result("好友")
 
-    assert result is visible
+
+@pytest.mark.asyncio
+async def test_search_panel_rejects_multiple_exact_friends(monkeypatch) -> None:
+    page = MagicMock()
+    search_items = MagicMock()
+    search_items.count = AsyncMock(return_value=2)
+    items = []
+    for _ in range(2):
+        button = MagicMock()
+        button.count = AsyncMock(return_value=1)
+        button.is_visible = AsyncMock(return_value=True)
+        button_group = MagicMock()
+        button_group.first = button
+        item = MagicMock()
+        item.locator.return_value = button_group
+        items.append(item)
+    search_items.nth.side_effect = lambda index: items[index]
+    root = MagicMock()
+    root.filter.return_value = search_items
+    page.locator.return_value = root
+    monkeypatch.setattr("app.douyin._contains_visible_exact_text", AsyncMock(return_value=True))
+
+    with pytest.raises(AmbiguousTargetError, match="多个同名"):
+        await DouyinChat(page)._search_result("好友")
 
 
 @pytest.mark.asyncio
@@ -151,56 +171,49 @@ async def test_confirm_opened_raises_on_timeout() -> None:
         await chat._confirm_opened("好友A")
 
 
-@pytest.mark.asyncio
-async def test_chat_open_error_accepts_panel_marker_with_name() -> None:
+def _locator_group(*nodes) -> MagicMock:
+    group = MagicMock()
+    group.count = AsyncMock(return_value=len(nodes))
+    group.nth.side_effect = lambda index: nodes[index]
+    return group
+
+
+def _routed_page(*, header_text: str | None, selected_name: str | None, composer_visible: bool) -> MagicMock:
     page = MagicMock()
-    marker = MagicMock()
-    marker.count = AsyncMock(return_value=1)
-    filtered = MagicMock()
-    filtered.first = marker
-    chain = MagicMock()
-    chain.filter = MagicMock(return_value=filtered)
-    page.locator.return_value = chain
+    header = MagicMock()
+    header.is_visible = AsyncMock(return_value=True)
+    header.inner_text = AsyncMock(return_value=header_text or "")
+    header_group = _locator_group(header) if header_text is not None else _locator_group()
 
-    chat = DouyinChat(page)
+    current = MagicMock()
+    current.is_visible = AsyncMock(return_value=True)
+    selected = MagicMock()
+    selected.is_visible = AsyncMock(return_value=True)
+    current.get_by_text.return_value = _locator_group(selected) if selected_name == "好友A" else _locator_group()
+    current_group = _locator_group(current) if selected_name is not None else _locator_group()
 
-    assert await chat._chat_open_error("好友A") is None
-
-
-def _routed_page(*, name_in_body: str, input_count: int) -> MagicMock:
-    page = MagicMock()
-    body = MagicMock()
-    body.inner_text = AsyncMock(return_value=name_in_body)
-    first_target = MagicMock()
-    first_target.count = AsyncMock(return_value=input_count)
-    first_target.is_visible = AsyncMock(return_value=True)
-    composer = MagicMock()
-    composer.first = first_target
-    filtered_first = MagicMock()
-    filtered_first.count = AsyncMock(return_value=0)
-    filtered = MagicMock()
-    filtered.first = filtered_first
-    chain = MagicMock()
-    chain.filter = MagicMock(return_value=filtered)
-    get_by_text = MagicMock()
-    get_by_text.count = AsyncMock(return_value=0)
-    page.get_by_text.return_value = get_by_text
+    editor = MagicMock()
+    editor.count = AsyncMock(return_value=1 if composer_visible else 0)
+    editor.is_visible = AsyncMock(return_value=composer_visible)
+    composer_group = MagicMock()
+    composer_group.first = editor
 
     def locator_router(selector: str):
-        if selector == "body":
-            return body
+        if selector in CHAT_HEADER_TITLES:
+            return header_group
+        if selector in CURRENT_CONVERSATIONS:
+            return current_group
         if selector in MESSAGE_INPUTS:
-            return composer
-        return chain
+            return composer_group
+        return _locator_group()
 
     page.locator.side_effect = locator_router
     return page
 
 
 @pytest.mark.asyncio
-async def test_chat_open_error_accepts_composer_and_page_name() -> None:
-    assert CHAT_PANEL_MARKERS
-    page = _routed_page(name_in_body="页面内容 好友A 你好", input_count=1)
+async def test_chat_open_error_accepts_header_composer_and_selected_target() -> None:
+    page = _routed_page(header_text="好友A", selected_name="好友A", composer_visible=True)
 
     chat = DouyinChat(page)
 
@@ -208,12 +221,22 @@ async def test_chat_open_error_accepts_composer_and_page_name() -> None:
 
 
 @pytest.mark.asyncio
-async def test_chat_open_error_rejects_when_name_absent() -> None:
-    page = _routed_page(name_in_body="页面没有目标好友", input_count=0)
+async def test_chat_open_error_rejects_name_outside_header() -> None:
+    page = _routed_page(header_text=None, selected_name=None, composer_visible=True)
 
     chat = DouyinChat(page)
 
     error = await chat._chat_open_error("好友A")
 
     assert isinstance(error, PageOperationError)
-    assert "无法确认聊天已打开" in str(error)
+    assert "无法确认目标会话" in str(error)
+
+
+@pytest.mark.asyncio
+async def test_chat_open_error_rejects_wrong_selected_conversation() -> None:
+    page = _routed_page(header_text="好友A", selected_name="好友B", composer_visible=True)
+
+    error = await DouyinChat(page)._chat_open_error("好友A")
+
+    assert isinstance(error, PageOperationError)
+    assert "选中会话: 不匹配" in str(error)

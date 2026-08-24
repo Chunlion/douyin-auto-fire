@@ -79,6 +79,7 @@ class DeliveryUnconfirmedError(PageOperationError):
 class DeliveryProbe:
     expected_text: str
     before_count: int
+    kind: str = "text"
 
 
 async def send_message(
@@ -90,65 +91,76 @@ async def send_message(
     if message.type == "random":
         return await send_message(page, chat, random.choice(message.choices), stickers)
     if message.type == "text":
-        probe = await _capture_delivery_probe(page, message.content or "")
+        probe = await _capture_delivery_probe(page, message.content or "", kind="text")
         await send_text(chat, message.content or "")
         return probe
     if message.type == "image":
         if message.path is None:
             raise PageOperationError("图片消息缺少文件路径")
-        probe = await _capture_delivery_probe(page)
+        probe = await _capture_delivery_probe(page, kind="media")
         await send_image(page, message.path.as_posix())
         return probe
     if message.type == "douyin_sticker":
         sticker = stickers.get(message.sticker or "")
         if sticker is None:
             raise PageOperationError(f"没有原生表情映射: {message.sticker}")
-        probe = await _capture_delivery_probe(page)
+        probe = await _capture_delivery_probe(page, kind="media")
         await send_douyin_sticker(page, sticker)
         return probe
     raise PageOperationError(f"不支持的消息类型: {message.type}")
 
 
-async def _capture_delivery_probe(page: Page, expected_text: str = "") -> DeliveryProbe:
+async def _capture_delivery_probe(page: Page, expected_text: str = "", kind: str = "text") -> DeliveryProbe:
+    counts: list[int] = []
+    for sample in range(3):
+        counts.append(await _count_outgoing_messages(page, expected_text, kind))
+        if sample < 2:
+            await page.wait_for_timeout(500)
     return DeliveryProbe(
         expected_text=expected_text,
-        before_count=await _count_outgoing_messages(page, expected_text),
+        before_count=max(counts),
+        kind=kind,
     )
 
 
-async def _count_outgoing_messages(page: Page, expected_text: str = "") -> int:
+async def _count_outgoing_messages(page: Page, expected_text: str = "", kind: str = "text") -> int:
     return await page.locator(OUTGOING_MESSAGES).evaluate_all(
-        """(messages, expected) => {
+        """(messages, [expected, kind]) => {
             const normalize = value => (value || '').replace(/[\\s\\u200B\\u200C\\u200D\\uFEFF]+/g, ' ').trim();
-            if (!expected) return messages.length;
             return messages.filter(message => {
                 const content = message.querySelector('[data-e2e="msg-item-content"]') || message;
+                const failed = normalize(message.innerText).includes('发送失败') ||
+                    !!message.querySelector('[aria-label*="重试"], [title*="重试"], [class*="sendFailed"], [class*="SendFailed"]');
+                if (failed) return false;
+                if (kind === 'media') return !!content.querySelector('img, video');
                 return normalize(content.innerText) === normalize(expected);
             }).length;
         }""",
-        expected_text,
+        [expected_text, kind],
     )
 
 
 async def confirm_delivery_persisted(page: Page, probe: DeliveryProbe, timeout_ms: int = 15_000) -> None:
     try:
         await page.wait_for_function(
-            """([selector, expected, beforeCount]) => {
+            """([selector, expected, kind, beforeCount]) => {
                 const normalize = value => (value || '').replace(/[\\s\\u200B\\u200C\\u200D\\uFEFF]+/g, ' ').trim();
                 const messages = [...document.querySelectorAll(selector)];
-                const count = expected
-                    ? messages.filter(message => {
-                        const content = message.querySelector('[data-e2e="msg-item-content"]') || message;
-                        return normalize(content.innerText) === normalize(expected);
-                    }).length
-                    : messages.length;
+                const count = messages.filter(message => {
+                    const content = message.querySelector('[data-e2e="msg-item-content"]') || message;
+                    const failed = normalize(message.innerText).includes('发送失败') ||
+                        !!message.querySelector('[aria-label*="重试"], [title*="重试"], [class*="sendFailed"], [class*="SendFailed"]');
+                    if (failed) return false;
+                    if (kind === 'media') return !!content.querySelector('img, video');
+                    return normalize(content.innerText) === normalize(expected);
+                }).length;
                 return count > beforeCount;
             }""",
-            arg=[OUTGOING_MESSAGES, probe.expected_text, probe.before_count],
+            arg=[OUTGOING_MESSAGES, probe.expected_text, probe.kind, probe.before_count],
             timeout=timeout_ms,
         )
     except Exception as exc:
-        raise DeliveryUnconfirmedError("重新加载会话后未检测到新增消息，送达待确认") from exc
+        raise DeliveryUnconfirmedError("重新加载会话后未检测到服务器保存的新增消息，发送结果待确认") from exc
 
 
 async def send_text(chat: DouyinChat, content: str) -> None:

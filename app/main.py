@@ -11,14 +11,14 @@ from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 
-from app.browser import AuthenticationError, RiskControlError, SearchBoxNotReadyError, open_douyin, open_private_messages, save_trace, verify_login
+from app.browser import AuthenticationError, RiskControlError, SearchBoxNotReadyError, UnexpectedPageError, open_douyin, open_private_messages, save_trace, verify_login
 from app.config import ConfigError, load_settings, load_task
 from app.douyin import DouyinChat
 from app.history import AlreadyRunningError, History, run_lock
 from app.models import Settings, TargetResult
 from app.notifier import send_dingtalk_notification, send_wecom_notification
 from app.privacy import RedactingFormatter, build_target_aliases, redact_text, target_alias
-from app.sender import DeliveryUnconfirmedError, confirm_delivery_persisted, send_message
+from app.sender import DeliveryProbe, DeliveryUnconfirmedError, confirm_delivery_persisted, send_message
 
 
 LOGGER = logging.getLogger("douyin_sender")
@@ -84,11 +84,15 @@ async def run(dry_run: bool = False, env_file: str | None = None) -> int:
                                     history.reserve(key)
                                 await verify_login(page, timeout_ms=3_000)
                                 probe = await send_message(page, chat, message, task.stickers)
+                                LOGGER.info("已提交发送请求，等待服务器历史确认: %s #%d", alias, message_index + 1)
+                                await _confirm_server_persistence(
+                                    page,
+                                    chat,
+                                    target.name,
+                                    probe,
+                                    target_open_retries=task.target_open_retries,
+                                )
                                 sent += 1
-                                LOGGER.info("已触发发送，送达待确认: %s #%d", alias, message_index + 1)
-                                await open_private_messages(page)
-                                await chat.open_target(target.name, retries=task.target_open_retries)
-                                await confirm_delivery_persisted(page, probe)
                                 if task.prevent_duplicates:
                                     history.mark_success(key)
                                 LOGGER.info("已确认服务器保存: %s #%d", alias, message_index + 1)
@@ -118,7 +122,7 @@ async def run(dry_run: bool = False, env_file: str | None = None) -> int:
                         )
                         if not task.continue_on_error:
                             break
-                    except (AuthenticationError, RiskControlError) as exc:
+                    except (AuthenticationError, RiskControlError, UnexpectedPageError) as exc:
                         LOGGER.exception("处理好友时登录状态失效: %s", alias)
                         screenshot = await _screenshot(page, settings.artifacts_dir, alias)
                         if screenshot:
@@ -180,7 +184,7 @@ def main() -> int:
         settings = load_settings(args.env_file)
         with run_lock(settings.artifacts_dir / "run.lock"):
             return asyncio.run(run(dry_run=args.dry_run, env_file=args.env_file))
-    except (ConfigError, AuthenticationError, RiskControlError, SearchBoxNotReadyError, AlreadyRunningError) as exc:
+    except (ConfigError, AuthenticationError, RiskControlError, SearchBoxNotReadyError, UnexpectedPageError, AlreadyRunningError) as exc:
         print(f"错误: {exc}")
         return 2
     except KeyboardInterrupt:
@@ -314,3 +318,28 @@ def _trace_path(artifacts_dir: Path) -> Path:
 def _message_id(index, message) -> str:
     payload = json.dumps(asdict(message), ensure_ascii=False, sort_keys=True, default=str)
     return f"{index}-{hashlib.sha256(payload.encode('utf-8')).hexdigest()[:12]}"
+
+
+async def _confirm_server_persistence(
+    page,
+    chat: DouyinChat,
+    target_name: str,
+    probe: DeliveryProbe,
+    *,
+    target_open_retries: int,
+    attempts: int = 2,
+) -> None:
+    last_error: DeliveryUnconfirmedError | None = None
+    for attempt in range(1, attempts + 1):
+        await open_private_messages(page)
+        await chat.open_target(target_name, retries=target_open_retries)
+        try:
+            await confirm_delivery_persisted(page, probe)
+            return
+        except DeliveryUnconfirmedError as exc:
+            last_error = exc
+            if attempt < attempts:
+                LOGGER.warning("服务器历史暂未出现新增消息，重新加载后复查")
+    if last_error is not None:
+        raise last_error
+    raise DeliveryUnconfirmedError("未执行服务器历史确认，发送结果待确认")

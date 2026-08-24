@@ -7,10 +7,13 @@ from app.browser import (
     AuthenticationError,
     RiskControlError,
     SearchBoxNotReadyError,
+    UnexpectedPageError,
     _collect_safe_diagnostic,
     _normalize_cookies,
     _safe_url,
+    _validate_chat_location,
     open_private_messages,
+    verify_login,
 )
 from app.config import ConfigError
 from app.selectors import DOUYIN_CHAT_URL, LOGIN_REQUIRED_MARKERS, RISK_MARKERS
@@ -33,6 +36,31 @@ def test_safe_url_strips_query_and_fragment() -> None:
     assert _safe_url("https://www.douyin.com/chat?token=SECRET&x=1#frag") == "https://www.douyin.com/chat"
     assert _safe_url("https://www.douyin.com/chat") == "https://www.douyin.com/chat"
     assert _safe_url("") == ""
+
+
+def test_validate_chat_location_rejects_external_site() -> None:
+    with pytest.raises(UnexpectedPageError, match="离开抖音站点"):
+        _validate_chat_location("https://example.com/chat")
+
+
+def test_validate_chat_location_requires_https() -> None:
+    with pytest.raises(UnexpectedPageError, match="安全连接"):
+        _validate_chat_location("http://www.douyin.com/chat")
+
+
+def test_validate_chat_location_identifies_login_redirect() -> None:
+    with pytest.raises(AuthenticationError, match="登录页面"):
+        _validate_chat_location("https://www.douyin.com/login")
+
+
+@pytest.mark.asyncio
+async def test_verify_login_does_not_misclassify_missing_search_as_logged_out() -> None:
+    page = MagicMock()
+    page.url = "https://www.douyin.com/chat"
+    with patch("app.browser._raise_if_session_blocked", new=AsyncMock()):
+        with patch("app.browser._first_visible_selector", new=AsyncMock(return_value=None)):
+            with pytest.raises(SearchBoxNotReadyError, match="无法确认私信页面已就绪"):
+                await verify_login(page)
 
 
 @pytest.mark.asyncio
@@ -173,7 +201,7 @@ async def test_login_required_still_raises_before_search_check() -> None:
     page.goto = AsyncMock()
 
     with patch("app.browser._any_visible", new=AsyncMock(side_effect=[False, True])):
-        with pytest.raises(AuthenticationError, match="登录状态失效"):
+        with pytest.raises(AuthenticationError, match="登录状态.*失效"):
             await open_private_messages(page)
 
 

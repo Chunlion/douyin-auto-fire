@@ -1,15 +1,12 @@
 DOUYIN_CHAT_URL = "https://www.douyin.com/chat"
 
 # Ordered alternatives keep page-specific changes isolated from the workflow.
-LOGIN_MARKERS = (
-    'text=私信',
-    'input[placeholder*="搜索"]',
-    '[role="textbox"][placeholder*="搜索"]',
-)
 LOGIN_REQUIRED_MARKERS = (
-    'text=扫码登录',
-    'text=验证码登录',
-    'text=登录后',
+    'text="扫码登录"',
+    'text="验证码登录"',
+    'text="密码登录"',
+    '[class*="login"] input[placeholder*="手机号"]',
+    '[class*="Login"] input[placeholder*="手机号"]',
 )
 RISK_MARKERS = (
     'text=安全验证',
@@ -23,13 +20,17 @@ SEARCH_INPUTS = (
     'input[aria-label*="搜索"]',
     '[role="textbox"][aria-label*="搜索"]',
 )
-CHAT_PANEL_MARKERS = (
-    '[class*="RightPanelHeader"]',
-    '[class*="chatHeader"]',
-    '[class*="ChatHeader"]',
-    '[class*="messageContent"]',
-    '[class*="chatContent"]',
-    '[class*="MessagePanel"]',
+LOGIN_MARKERS = SEARCH_INPUTS
+CHAT_HEADER_TITLES = (
+    '.RightPanelHeadertitle',
+    '[class*="RightPanelHeader"] [class*="title"]',
+    '[class*="chatHeader"] [class*="title"]',
+    '[class*="ChatHeader"] [class*="title"]',
+)
+CURRENT_CONVERSATIONS = (
+    '[data-e2e="conversation-item"][class*="curConversation"]',
+    '[data-e2e="conversation-item"][aria-selected="true"]',
+    '[class*="conversationConversationItemcurConversation"]',
 )
 MESSAGE_INPUTS = (
     '[data-contents="true"]',

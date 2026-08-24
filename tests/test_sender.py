@@ -154,11 +154,28 @@ async def test_capture_delivery_probe_counts_matching_outgoing_messages() -> Non
     messages = MagicMock()
     messages.evaluate_all = AsyncMock(return_value=2)
     page.locator.return_value = messages
+    page.wait_for_timeout = AsyncMock()
 
     probe = await _capture_delivery_probe(page, "睡觉")
 
     assert probe == DeliveryProbe(expected_text="睡觉", before_count=2)
-    page.locator.assert_called_once_with(OUTGOING_MESSAGES)
+    assert page.locator.call_count == 3
+    assert messages.evaluate_all.call_args.args[1] == ["睡觉", "text"]
+    assert page.wait_for_timeout.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_capture_media_probe_uses_highest_stable_baseline() -> None:
+    page = MagicMock()
+    messages = MagicMock()
+    messages.evaluate_all = AsyncMock(side_effect=[1, 3, 2])
+    page.locator.return_value = messages
+    page.wait_for_timeout = AsyncMock()
+
+    probe = await _capture_delivery_probe(page, kind="media")
+
+    assert probe == DeliveryProbe(expected_text="", before_count=3, kind="media")
+    assert messages.evaluate_all.call_args.args[1] == ["", "media"]
 
 
 @pytest.mark.asyncio
@@ -169,7 +186,7 @@ async def test_confirm_delivery_persisted_requires_count_increase() -> None:
 
     await confirm_delivery_persisted(page, probe)
 
-    assert page.wait_for_function.await_args.kwargs["arg"] == [OUTGOING_MESSAGES, "睡觉", 1]
+    assert page.wait_for_function.await_args.kwargs["arg"] == [OUTGOING_MESSAGES, "睡觉", "text", 1]
     assert page.wait_for_function.await_args.kwargs["timeout"] == 15_000
 
 
@@ -178,7 +195,7 @@ async def test_confirm_delivery_persisted_reports_unconfirmed() -> None:
     page = MagicMock()
     page.wait_for_function = AsyncMock(side_effect=TimeoutError)
 
-    with pytest.raises(DeliveryUnconfirmedError, match="送达待确认"):
+    with pytest.raises(DeliveryUnconfirmedError, match="发送结果待确认"):
         await confirm_delivery_persisted(page, DeliveryProbe(expected_text="睡觉", before_count=1))
 
 

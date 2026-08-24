@@ -36,6 +36,10 @@ class SearchBoxNotReadyError(RuntimeError):
     """私信页已打开但搜索框未就绪；说明渲染慢，而非登录失效。"""
 
 
+class UnexpectedPageError(RuntimeError):
+    """导航离开了可信的抖音站点。"""
+
+
 # 私信页是 SPA，domcontentloaded 之后搜索框由 JS 异步挂载，冷启动时可能超过
 # 单轮等待窗口。这里做有限次数重试，并在需要时 reload，避免把慢渲染误判为认证失效。
 SEARCH_BOX_RETRIES = 3
@@ -109,24 +113,18 @@ async def open_douyin(settings: Settings) -> AsyncIterator[BrowserSession]:
 
 
 async def verify_login(page: Page, timeout_ms: int = 15_000) -> None:
-    if await _any_visible(page, RISK_MARKERS, timeout_ms=2_000):
-        raise RiskControlError("抖音要求进行安全验证，任务已停止")
-    if await _any_visible(page, LOGIN_REQUIRED_MARKERS, timeout_ms=2_000):
-        raise AuthenticationError("抖音登录状态已失效")
-    if not await _any_visible(page, LOGIN_MARKERS, timeout_ms=timeout_ms):
-        raise AuthenticationError("未检测到抖音私信页面，登录状态可能失效或页面结构已变化")
+    await _raise_if_session_blocked(page)
+    _validate_chat_location(page.url)
+    if await _first_visible_selector(page, SEARCH_INPUTS, timeout_ms) is None:
+        raise SearchBoxNotReadyError("未检测到好友搜索框，无法确认私信页面已就绪")
 
 
 async def open_private_messages(page: Page, timeout_ms: int = 15_000) -> None:
     await page.goto(DOUYIN_CHAT_URL, wait_until="domcontentloaded", timeout=45_000)
-    # 1. Explicit risk-control page takes priority, independently of login state.
-    if await _any_visible(page, RISK_MARKERS, timeout_ms=2_000):
-        raise RiskControlError("抖音私信页面要求进行安全验证，任务已停止")
-    # 2. An explicit login page is the only signal that lets us attribute to
-    #    expired credentials. Marker absence does not imply the credentials are
-    #    valid, so search-box detection (steps 3/4) is kept separate.
-    if await _any_visible(page, LOGIN_REQUIRED_MARKERS, timeout_ms=2_000):
-        raise AuthenticationError("进入抖音私信页面后登录状态失效")
+    # Only explicit login/risk evidence is classified as an authentication
+    # failure. A missing SPA element is a separate page-readiness failure.
+    await _raise_if_session_blocked(page)
+    _validate_chat_location(page.url)
 
     # 3. Detect the friend search box. The chat page is a SPA whose search box is
     #    mounted asynchronously after domcontentloaded; a single detection round
@@ -140,10 +138,8 @@ async def open_private_messages(page: Page, timeout_ms: int = 15_000) -> None:
             return
         # The search box is missing; a freshly shown login prompt may only have
         # appeared during the wait, so re-check before deciding to retry.
-        if await _any_visible(page, RISK_MARKERS, timeout_ms=2_000):
-            raise RiskControlError("抖音私信页面要求进行安全验证，任务已停止")
-        if await _any_visible(page, LOGIN_REQUIRED_MARKERS, timeout_ms=2_000):
-            raise AuthenticationError("进入抖音私信页面后登录状态失效")
+        await _raise_if_session_blocked(page)
+        _validate_chat_location(page.url)
         if attempt < SEARCH_BOX_RETRIES:
             LOGGER.warning("未检测到好友搜索框，第 %d/%d 次尝试，准备重试", attempt, SEARCH_BOX_RETRIES)
             if attempt == 1:
@@ -163,6 +159,32 @@ async def open_private_messages(page: Page, timeout_ms: int = 15_000) -> None:
     diagnostic = await _collect_safe_diagnostic(page, LOGIN_REQUIRED_MARKERS, RISK_MARKERS)
     LOGGER.error("多次重试后仍未检测到好友搜索框，页面安全诊断:\n%s", diagnostic)
     raise SearchBoxNotReadyError(f"私信页面已打开，但搜索框在 {SEARCH_BOX_RETRIES} 次重试后仍未就绪")
+
+
+async def _raise_if_session_blocked(page: Page) -> None:
+    if await _any_visible(page, RISK_MARKERS, timeout_ms=2_000):
+        raise RiskControlError("抖音要求进行安全验证，任务已停止")
+    if await _any_visible(page, LOGIN_REQUIRED_MARKERS, timeout_ms=2_000):
+        raise AuthenticationError("抖音登录状态已失效，请重新扫码生成登录状态")
+
+
+def _validate_chat_location(url: Any) -> None:
+    if not isinstance(url, str) or not url:
+        return
+    try:
+        parsed = urlsplit(url)
+    except ValueError as exc:
+        raise UnexpectedPageError("抖音私信页地址无效，任务已停止") from exc
+    if parsed.scheme.lower() != "https":
+        raise UnexpectedPageError("抖音私信页未使用安全连接，任务已停止")
+    host = (parsed.hostname or "").lower()
+    if host != "douyin.com" and not host.endswith(".douyin.com"):
+        raise UnexpectedPageError("页面已离开抖音站点，任务已停止")
+    path = parsed.path.lower()
+    if "login" in path or "passport" in path:
+        raise AuthenticationError("抖音跳转到登录页面，请重新扫码生成登录状态")
+    if not path.startswith("/chat"):
+        raise SearchBoxNotReadyError("当前页面不是抖音私信页，无法确认登录状态")
 
 
 async def save_trace(session: BrowserSession, path: Path) -> None:

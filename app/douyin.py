@@ -4,10 +4,14 @@ import asyncio
 
 from playwright.async_api import Locator, Page
 
-from app.selectors import CHAT_PANEL_MARKERS, MESSAGE_INPUTS, SEARCH_INPUTS
+from app.selectors import CHAT_HEADER_TITLES, CURRENT_CONVERSATIONS, MESSAGE_INPUTS, SEARCH_INPUTS
 
 
 class PageOperationError(RuntimeError):
+    pass
+
+
+class AmbiguousTargetError(PageOperationError):
     pass
 
 
@@ -57,11 +61,18 @@ class DouyinChat:
         # correct control; clicking the hidden conversation cache does not mount
         # the composer.
         search_items = self.page.locator('[class*="SearchPanelitem"]').filter(has_text=name)
+        search_buttons: list[Locator] = []
         for index in range(await search_items.count()):
             item = search_items.nth(index)
+            if not await _contains_visible_exact_text(item, name):
+                continue
             button = item.locator('[class*="SearchPanelitemchat_btn"]').first
-            if await button.count():
-                return button
+            if await button.count() and await button.is_visible():
+                search_buttons.append(button)
+        if len(search_buttons) > 1:
+            raise AmbiguousTargetError("搜索结果存在多个同名好友，无法安全选择")
+        if search_buttons:
+            return search_buttons[0]
 
         # The nickname node can be hidden while its conversation row is visible.
         # Locate and click the complete row instead of relying on text visibility.
@@ -73,30 +84,27 @@ class DouyinChat:
         )
         for selector in row_selectors:
             rows = self.page.locator(selector).filter(has_text=name)
+            matching_rows: list[Locator] = []
             for index in range(await rows.count()):
                 row = rows.nth(index)
                 try:
                     class_name = await row.get_attribute("class") or ""
-                    if "wrapper" in class_name or await row.get_attribute("data-e2e") == "conversation-item":
-                        return row
+                    is_row = "wrapper" in class_name or await row.get_attribute("data-e2e") == "conversation-item"
+                    if is_row and await row.is_visible() and await _contains_visible_exact_text(row, name):
+                        matching_rows.append(row)
                 except Exception:
                     continue
+            if len(matching_rows) > 1:
+                raise AmbiguousTargetError("会话列表存在多个同名好友，无法安全选择")
+            if matching_rows:
+                return matching_rows[0]
 
-        candidates = [self.page.get_by_text(name, exact=True), self.page.get_by_text(name, exact=False)]
-        for candidate_group in candidates:
-            count = await candidate_group.count()
-            visible: list[Locator] = []
-            for index in range(count):
-                candidate = candidate_group.nth(index)
-                try:
-                    if await candidate.is_visible():
-                        visible.append(candidate)
-                except Exception:
-                    continue
-            if len(visible) == 1:
-                return visible[0]
-            if len(visible) > 1:
-                return visible[0]
+        exact = self.page.get_by_text(name, exact=True)
+        visible = await _visible_locators(exact)
+        if len(visible) > 1:
+            raise AmbiguousTargetError("页面存在多个同名候选项，无法安全选择")
+        if visible:
+            return visible[0]
 
         # Some Douyin builds render the title itself as hidden, but keep a visible
         # ancestor as the actionable result. Find that ancestor from the hidden title.
@@ -129,33 +137,32 @@ class DouyinChat:
             await self.page.wait_for_timeout(500)
 
     async def _chat_open_error(self, name: str) -> PageOperationError | None:
-        for selector in CHAT_PANEL_MARKERS:
-            locator = self.page.locator(selector).filter(has_text=name).first
-            if await locator.count():
-                return None
-
         composer_visible = await self._composer_visible()
-        if composer_visible:
-            body_text = ""
-            try:
-                body_text = (await self.page.locator("body").inner_text())[:1000].replace("\n", " ")
-            except Exception:
-                body_text = ""
-            if name in body_text:
-                return None
-            text = self.page.get_by_text(name, exact=True)
-            for index in range(await text.count()):
-                candidate = text.nth(index)
-                try:
-                    if not await candidate.is_visible():
-                        continue
-                    class_name = await candidate.get_attribute("class") or ""
-                    if "conversationConversationItemtitle" not in class_name:
-                        return None
-                except Exception:
-                    continue
+        header_matches = any(
+            [await _locator_has_visible_exact_text(self.page.locator(selector), name) for selector in CHAT_HEADER_TITLES]
+        )
+        current_rows_seen = False
+        current_matches = False
+        for selector in CURRENT_CONVERSATIONS:
+            rows = self.page.locator(selector)
+            visible_rows = await _visible_locators(rows)
+            if visible_rows:
+                current_rows_seen = True
+            for row in visible_rows:
+                if await _contains_visible_exact_text(row, name):
+                    current_matches = True
+                    break
+            if current_matches:
+                break
+        current_valid = current_matches if current_rows_seen else True
+        if composer_visible and header_matches and current_valid:
+            return None
+        current_status = "匹配" if current_matches else "不匹配" if current_rows_seen else "未检测"
         return PageOperationError(
-            f"点击搜索结果后无法确认聊天已打开（输入框: {'有' if composer_visible else '无'}）"
+            "点击搜索结果后无法确认目标会话"
+            f"（输入框: {'有' if composer_visible else '无'}，"
+            f"会话标题: {'匹配' if header_matches else '不匹配'}，"
+            f"选中会话: {current_status}）"
         )
 
     async def _composer_visible(self) -> bool:
@@ -183,3 +190,35 @@ async def first_visible(page: Page, selectors: tuple[str, ...], timeout_ms: int 
 
 def _css_escape(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+async def _visible_locators(group: Locator) -> list[Locator]:
+    visible: list[Locator] = []
+    for index in range(await group.count()):
+        candidate = group.nth(index)
+        try:
+            if await candidate.is_visible():
+                visible.append(candidate)
+        except Exception:
+            continue
+    return visible
+
+
+async def _locator_has_visible_exact_text(group: Locator, expected: str) -> bool:
+    normalized = _normalize_text(expected)
+    for candidate in await _visible_locators(group):
+        try:
+            if _normalize_text(await candidate.inner_text()) == normalized:
+                return True
+        except Exception:
+            continue
+    return False
+
+
+async def _contains_visible_exact_text(container: Locator, expected: str) -> bool:
+    exact = container.get_by_text(expected, exact=True)
+    return bool(await _visible_locators(exact))
+
+
+def _normalize_text(value: str) -> str:
+    return " ".join(value.replace("\u200b", "").replace("\u200c", "").replace("\u200d", "").split())

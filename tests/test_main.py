@@ -197,18 +197,21 @@ async def test_unconfirmed_persisted_message_returns_unknown(monkeypatch, tmp_pa
     monkeypatch.setattr(main_module, "load_task", lambda _settings: task)
     monkeypatch.setattr(main_module, "History", MagicMock(return_value=history))
     monkeypatch.setattr(main_module, "open_douyin", fake_open_douyin)
-    monkeypatch.setattr(main_module, "open_private_messages", AsyncMock())
+    open_messages = AsyncMock()
+    monkeypatch.setattr(main_module, "open_private_messages", open_messages)
     monkeypatch.setattr(main_module, "DouyinChat", MagicMock(return_value=chat))
     monkeypatch.setattr(main_module, "verify_login", AsyncMock())
+    send_message = AsyncMock(return_value=DeliveryProbe(expected_text="测试", before_count=0))
     monkeypatch.setattr(
         main_module,
         "send_message",
-        AsyncMock(return_value=DeliveryProbe(expected_text="测试", before_count=0)),
+        send_message,
     )
+    confirm_delivery = AsyncMock(side_effect=DeliveryUnconfirmedError("重新加载会话后未检测到新增消息，送达待确认"))
     monkeypatch.setattr(
         main_module,
         "confirm_delivery_persisted",
-        AsyncMock(side_effect=DeliveryUnconfirmedError("重新加载会话后未检测到新增消息，送达待确认")),
+        confirm_delivery,
     )
     monkeypatch.setattr(main_module, "_screenshot", AsyncMock(return_value=None))
     monkeypatch.setattr(main_module, "_write_results", MagicMock())
@@ -216,7 +219,11 @@ async def test_unconfirmed_persisted_message_returns_unknown(monkeypatch, tmp_pa
     monkeypatch.setattr(main_module, "_configure_logging", lambda _path, _aliases=None: None)
 
     assert await main_module.run() == 1
+    send_message.assert_awaited_once()
+    assert confirm_delivery.await_count == 2
+    assert open_messages.await_count == 3
+    assert chat.open_target.await_count == 3
     results = notify.await_args.args[3]
     assert [(result.status, result.sent, result.error) for result in results] == [
-        ("unknown", 1, "重新加载会话后未检测到新增消息，送达待确认")
+        ("unknown", 0, "重新加载会话后未检测到新增消息，送达待确认")
     ]
