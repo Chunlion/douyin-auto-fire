@@ -30,6 +30,7 @@ async def run(dry_run: bool = False, env_file: str | None = None) -> int:
     settings.artifacts_dir.mkdir(parents=True, exist_ok=True)
     aliases = build_target_aliases(task.targets)
     _configure_logging(settings.artifacts_dir, aliases)
+    LOGGER.info("运行模式: %s", "检查模式（不发送消息）" if dry_run else "正式发送")
 
     if not settings.storage_state and not settings.cookie:
         raise ConfigError("必须配置 DOUYIN_STORAGE_STATE 或 DOUYIN_COOKIE")
@@ -86,6 +87,7 @@ async def run(dry_run: bool = False, env_file: str | None = None) -> int:
                                 if task.prevent_duplicates:
                                     history.mark_success(key)
                                 sent += 1
+                                LOGGER.info("已确认发送: %s #%d", alias, message_index + 1)
                                 if message_index < len(target.messages) - 1:
                                     await asyncio.sleep(random.uniform(task.interval_min, task.interval_max))
                         results.append(TargetResult(target=target.name, status="success", sent=sent, target_alias=alias))

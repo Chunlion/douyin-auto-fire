@@ -24,7 +24,7 @@ async def _trigger_send(page: Page) -> None:
     for selector in SEND_BUTTONS:
         candidate = page.locator(selector).first
         try:
-            if await candidate.count() and await candidate.is_visible():
+            if await _send_control_ready(candidate):
                 button = candidate
                 break
         except Exception:
@@ -39,11 +39,17 @@ async def _publish_ready(page: Page) -> bool:
     for selector in SEND_BUTTONS:
         candidate = page.locator(selector).first
         try:
-            if await candidate.count() and await candidate.is_visible():
+            if await _send_control_ready(candidate):
                 return True
         except Exception:
             continue
     return False
+
+
+async def _send_control_ready(control) -> bool:
+    if not await control.count() or not await control.is_visible() or not await control.is_enabled():
+        return False
+    return await control.get_attribute("aria-disabled") != "true"
 
 
 LATEST_OUTGOING_MESSAGE = (
@@ -101,7 +107,26 @@ async def send_text(chat: DouyinChat, content: str) -> None:
     before = await _mark_latest_outgoing_message(page)
     await page.wait_for_timeout(300)
     await _trigger_send(page)
+    await _wait_for_composer_cleared(editor, content)
     await _confirm_outgoing_message(page, before, label="文字", expected_text=content)
+
+
+async def _wait_for_composer_cleared(editor, expected_text: str, timeout_ms: int = 5_000) -> None:
+    attempts = max(1, timeout_ms // 100)
+    normalized_expected = _normalize_text(expected_text)
+    for _ in range(attempts):
+        try:
+            current = await editor.evaluate("element => element.innerText || element.textContent || ''")
+            if normalized_expected not in _normalize_text(current):
+                return
+        except Exception:
+            pass
+        await editor.page.wait_for_timeout(100)
+    raise PageOperationError("点击发送后输入框未清空，消息未发送")
+
+
+def _normalize_text(value: str | None) -> str:
+    return " ".join((value or "").replace("\u200b", "").replace("\u200c", "").replace("\u200d", "").split())
 
 
 async def send_image(page: Page, image_path: str) -> None:
@@ -254,9 +279,9 @@ async def _confirm_outgoing_message(
                 const message = document.querySelector(selector);
                 if (!message) return false;
                 const content = message.querySelector('[data-e2e="msg-item-content"]') || message;
-                const isNewMessage =
-                    message.getAttribute('data-douyin-sender-anchor') !== anchor ||
-                    content.innerHTML !== previousContent;
+                const markerChanged = message.getAttribute('data-douyin-sender-anchor') !== anchor;
+                const contentChanged = content.innerHTML !== previousContent;
+                const isNewMessage = markerChanged && (expectedText || expectedResource || contentChanged);
                 if (!isNewMessage) return false;
                 if (expectedText) {
                     const normalize = value => (value || '').replace(/[\\s\\u200B\\u200C\\u200D\\uFEFF]+/g, ' ').trim();
@@ -269,7 +294,7 @@ async def _confirm_outgoing_message(
             arg=[LATEST_OUTGOING_MESSAGE, anchor, before_content, resource_key, expected_text],
             timeout=15_000,
         )
-        await page.wait_for_timeout(3_000)
+        await page.wait_for_timeout(5_000)
         latest = page.locator(LATEST_OUTGOING_MESSAGE).first
         for selector in SEND_FAILURE_MARKERS:
             marker = latest.locator(selector).first
@@ -278,7 +303,7 @@ async def _confirm_outgoing_message(
     except PageOperationError:
         raise
     except Exception as exc:
-        raise PageOperationError(f"{label}已发送，但没有检测到新的已发送消息") from exc
+        raise PageOperationError(f"未确认{label}已发送：没有检测到新的已发送消息") from exc
     finally:
         anchors = page.locator(f"[{MESSAGE_CONFIRM_ANCHOR}]")
         try:
