@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import random
 import secrets
+from dataclasses import dataclass
 from urllib.parse import urlsplit
 
 from playwright.async_api import Page
@@ -56,6 +57,10 @@ LATEST_OUTGOING_MESSAGE = (
     '.messageMessageListlist [data-index="0"] '
     '.messageMessageBoxmessageBox:has(.messageMessageBoxcontentBox.messageMessageBoxisFromMe)'
 )
+OUTGOING_MESSAGES = (
+    '.messageMessageListlist [data-index] '
+    '.messageMessageBoxmessageBox:has(.messageMessageBoxcontentBox.messageMessageBoxisFromMe)'
+)
 MESSAGE_CONFIRM_ANCHOR = "data-douyin-sender-anchor"
 SEND_FAILURE_MARKERS = (
     "text=发送失败",
@@ -66,25 +71,84 @@ SEND_FAILURE_MARKERS = (
 )
 
 
-async def send_message(page: Page, chat: DouyinChat, message: Message, stickers: dict[str, Sticker]) -> None:
+class DeliveryUnconfirmedError(PageOperationError):
+    pass
+
+
+@dataclass(frozen=True)
+class DeliveryProbe:
+    expected_text: str
+    before_count: int
+
+
+async def send_message(
+    page: Page,
+    chat: DouyinChat,
+    message: Message,
+    stickers: dict[str, Sticker],
+) -> DeliveryProbe:
     if message.type == "random":
-        await send_message(page, chat, random.choice(message.choices), stickers)
-        return
+        return await send_message(page, chat, random.choice(message.choices), stickers)
     if message.type == "text":
+        probe = await _capture_delivery_probe(page, message.content or "")
         await send_text(chat, message.content or "")
-        return
+        return probe
     if message.type == "image":
         if message.path is None:
             raise PageOperationError("图片消息缺少文件路径")
+        probe = await _capture_delivery_probe(page)
         await send_image(page, message.path.as_posix())
-        return
+        return probe
     if message.type == "douyin_sticker":
         sticker = stickers.get(message.sticker or "")
         if sticker is None:
             raise PageOperationError(f"没有原生表情映射: {message.sticker}")
+        probe = await _capture_delivery_probe(page)
         await send_douyin_sticker(page, sticker)
-        return
+        return probe
     raise PageOperationError(f"不支持的消息类型: {message.type}")
+
+
+async def _capture_delivery_probe(page: Page, expected_text: str = "") -> DeliveryProbe:
+    return DeliveryProbe(
+        expected_text=expected_text,
+        before_count=await _count_outgoing_messages(page, expected_text),
+    )
+
+
+async def _count_outgoing_messages(page: Page, expected_text: str = "") -> int:
+    return await page.locator(OUTGOING_MESSAGES).evaluate_all(
+        """(messages, expected) => {
+            const normalize = value => (value || '').replace(/[\\s\\u200B\\u200C\\u200D\\uFEFF]+/g, ' ').trim();
+            if (!expected) return messages.length;
+            return messages.filter(message => {
+                const content = message.querySelector('[data-e2e="msg-item-content"]') || message;
+                return normalize(content.innerText) === normalize(expected);
+            }).length;
+        }""",
+        expected_text,
+    )
+
+
+async def confirm_delivery_persisted(page: Page, probe: DeliveryProbe, timeout_ms: int = 15_000) -> None:
+    try:
+        await page.wait_for_function(
+            """([selector, expected, beforeCount]) => {
+                const normalize = value => (value || '').replace(/[\\s\\u200B\\u200C\\u200D\\uFEFF]+/g, ' ').trim();
+                const messages = [...document.querySelectorAll(selector)];
+                const count = expected
+                    ? messages.filter(message => {
+                        const content = message.querySelector('[data-e2e="msg-item-content"]') || message;
+                        return normalize(content.innerText) === normalize(expected);
+                    }).length
+                    : messages.length;
+                return count > beforeCount;
+            }""",
+            arg=[OUTGOING_MESSAGES, probe.expected_text, probe.before_count],
+            timeout=timeout_ms,
+        )
+    except Exception as exc:
+        raise DeliveryUnconfirmedError("重新加载会话后未检测到新增消息，送达待确认") from exc
 
 
 async def send_text(chat: DouyinChat, content: str) -> None:

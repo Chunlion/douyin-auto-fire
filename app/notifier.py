@@ -79,7 +79,7 @@ def build_dingtalk_markdown(
     ]
     if successes:
         for index, result in enumerate(successes[:MAX_RESULTS_PER_SECTION], 1):
-            detail = "验证通过" if dry_run else f"已发送 {result.sent} 条"
+            detail = "验证通过" if dry_run else f"已确认发送 {result.sent} 条"
             lines.append(f"{index}. **{_markdown_text(result.target, limit=100)}** - {detail}")
         if len(successes) > MAX_RESULTS_PER_SECTION:
             lines.append(f"- 其余 {len(successes) - MAX_RESULTS_PER_SECTION} 人已省略")

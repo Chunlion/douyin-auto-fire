@@ -6,6 +6,7 @@ import pytest
 
 from app.browser import AuthenticationError
 from app.models import Message, Settings, Target, TaskConfig
+from app.sender import DeliveryProbe, DeliveryUnconfirmedError
 import app.main as main_module
 
 
@@ -101,7 +102,7 @@ async def test_browser_start_failure_still_notifies(monkeypatch, tmp_path) -> No
 
 
 @pytest.mark.asyncio
-async def test_waits_between_consecutive_messages_for_same_friend(monkeypatch, tmp_path) -> None:
+async def test_confirms_persisted_messages_and_waits_between_them(monkeypatch, tmp_path) -> None:
     settings = _settings(tmp_path)
     messages = (Message(type="text", content="一"), Message(type="text", content="二"))
     task = TaskConfig(
@@ -125,7 +126,14 @@ async def test_waits_between_consecutive_messages_for_same_friend(monkeypatch, t
     history.run_date.return_value = "2026-08-09"
     chat = MagicMock()
     chat.open_target = AsyncMock()
-    send_message = AsyncMock()
+    send_message = AsyncMock(
+        side_effect=[
+            DeliveryProbe(expected_text="一", before_count=0),
+            DeliveryProbe(expected_text="二", before_count=0),
+        ]
+    )
+    confirm_delivery = AsyncMock()
+    open_messages = AsyncMock()
     notify = AsyncMock()
     sleeps = []
 
@@ -136,21 +144,79 @@ async def test_waits_between_consecutive_messages_for_same_friend(monkeypatch, t
     monkeypatch.setattr(main_module, "load_task", lambda _settings: task)
     monkeypatch.setattr(main_module, "History", MagicMock(return_value=history))
     monkeypatch.setattr(main_module, "open_douyin", fake_open_douyin)
-    monkeypatch.setattr(main_module, "open_private_messages", AsyncMock())
+    monkeypatch.setattr(main_module, "open_private_messages", open_messages)
     monkeypatch.setattr(main_module, "DouyinChat", MagicMock(return_value=chat))
     monkeypatch.setattr(main_module, "verify_login", AsyncMock())
     monkeypatch.setattr(main_module, "send_message", send_message)
+    monkeypatch.setattr(main_module, "confirm_delivery_persisted", confirm_delivery)
     monkeypatch.setattr("asyncio.sleep", fake_sleep)
     monkeypatch.setattr(main_module, "_screenshot", AsyncMock(return_value=None))
     monkeypatch.setattr(main_module, "_write_results", MagicMock())
     monkeypatch.setattr(main_module, "_notify_dingtalk", notify)
     monkeypatch.setattr(main_module, "_configure_logging", lambda _path, _aliases=None: None)
 
-    assert await main_module.run() == 1
+    assert await main_module.run() == 0
     assert send_message.await_count == 2
+    assert confirm_delivery.await_count == 2
+    assert open_messages.await_count == 3
+    assert chat.open_target.await_count == 3
     assert sleeps == [0.5]
     history.mark_success.assert_not_called()
     results = notify.await_args.args[3]
     assert [(result.status, result.sent, result.error) for result in results] == [
-        ("unknown", 2, "页面已触发发送，无法确认服务器已接收")
+        ("success", 2, None)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_unconfirmed_persisted_message_returns_unknown(monkeypatch, tmp_path) -> None:
+    settings = _settings(tmp_path)
+    task = TaskConfig(
+        task_id="daily-streak",
+        timezone="Asia/Shanghai",
+        targets=(Target(name="好友A", messages=(Message(type="text", content="测试"),)),),
+        stickers={},
+        interval_min=0,
+        interval_max=0,
+        continue_on_error=True,
+        prevent_duplicates=False,
+    )
+    page = MagicMock()
+    session = SimpleNamespace(page=page, context=MagicMock())
+
+    @asynccontextmanager
+    async def fake_open_douyin(_settings):
+        yield session
+
+    history = MagicMock()
+    history.run_date.return_value = "2026-08-09"
+    chat = MagicMock()
+    chat.open_target = AsyncMock()
+    notify = AsyncMock()
+    monkeypatch.setattr(main_module, "load_settings", lambda _env=None: settings)
+    monkeypatch.setattr(main_module, "load_task", lambda _settings: task)
+    monkeypatch.setattr(main_module, "History", MagicMock(return_value=history))
+    monkeypatch.setattr(main_module, "open_douyin", fake_open_douyin)
+    monkeypatch.setattr(main_module, "open_private_messages", AsyncMock())
+    monkeypatch.setattr(main_module, "DouyinChat", MagicMock(return_value=chat))
+    monkeypatch.setattr(main_module, "verify_login", AsyncMock())
+    monkeypatch.setattr(
+        main_module,
+        "send_message",
+        AsyncMock(return_value=DeliveryProbe(expected_text="测试", before_count=0)),
+    )
+    monkeypatch.setattr(
+        main_module,
+        "confirm_delivery_persisted",
+        AsyncMock(side_effect=DeliveryUnconfirmedError("重新加载会话后未检测到新增消息，送达待确认")),
+    )
+    monkeypatch.setattr(main_module, "_screenshot", AsyncMock(return_value=None))
+    monkeypatch.setattr(main_module, "_write_results", MagicMock())
+    monkeypatch.setattr(main_module, "_notify_dingtalk", notify)
+    monkeypatch.setattr(main_module, "_configure_logging", lambda _path, _aliases=None: None)
+
+    assert await main_module.run() == 1
+    results = notify.await_args.args[3]
+    assert [(result.status, result.sent, result.error) for result in results] == [
+        ("unknown", 1, "重新加载会话后未检测到新增消息，送达待确认")
     ]

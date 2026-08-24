@@ -18,7 +18,7 @@ from app.history import AlreadyRunningError, History, run_lock
 from app.models import Settings, TargetResult
 from app.notifier import send_dingtalk_notification, send_wecom_notification
 from app.privacy import RedactingFormatter, build_target_aliases, redact_text, target_alias
-from app.sender import send_message
+from app.sender import DeliveryUnconfirmedError, confirm_delivery_persisted, send_message
 
 
 LOGGER = logging.getLogger("douyin_sender")
@@ -83,22 +83,41 @@ async def run(dry_run: bool = False, env_file: str | None = None) -> int:
                                 if task.prevent_duplicates:
                                     history.reserve(key)
                                 await verify_login(page, timeout_ms=3_000)
-                                await send_message(page, chat, message, task.stickers)
+                                probe = await send_message(page, chat, message, task.stickers)
                                 sent += 1
                                 LOGGER.info("已触发发送，送达待确认: %s #%d", alias, message_index + 1)
+                                await open_private_messages(page)
+                                await chat.open_target(target.name, retries=task.target_open_retries)
+                                await confirm_delivery_persisted(page, probe)
+                                if task.prevent_duplicates:
+                                    history.mark_success(key)
+                                LOGGER.info("已确认服务器保存: %s #%d", alias, message_index + 1)
                                 if message_index < len(target.messages) - 1:
                                     await asyncio.sleep(random.uniform(task.interval_min, task.interval_max))
-                        status = "unknown" if not dry_run and sent else "success"
-                        error = "页面已触发发送，无法确认服务器已接收" if status == "unknown" else None
                         results.append(
                             TargetResult(
                                 target=target.name,
-                                status=status,
+                                status="success",
                                 sent=sent,
-                                error=error,
                                 target_alias=alias,
                             )
                         )
+                    except DeliveryUnconfirmedError as exc:
+                        LOGGER.warning("消息送达待确认: %s", alias)
+                        screenshot = await _screenshot(page, settings.artifacts_dir, alias)
+                        if screenshot:
+                            screenshots.append(screenshot)
+                        results.append(
+                            TargetResult(
+                                target=target.name,
+                                status="unknown",
+                                sent=sent,
+                                error=str(exc),
+                                target_alias=alias,
+                            )
+                        )
+                        if not task.continue_on_error:
+                            break
                     except (AuthenticationError, RiskControlError) as exc:
                         LOGGER.exception("处理好友时登录状态失效: %s", alias)
                         screenshot = await _screenshot(page, settings.artifacts_dir, alias)

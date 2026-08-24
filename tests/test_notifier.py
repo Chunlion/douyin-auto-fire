@@ -107,7 +107,7 @@ def test_markdown_lists_successes_failures_and_screenshots(monkeypatch) -> None:
     assert title == "抖音自动发送：存在失败"
     assert "完成时间**：2026-08-09 16:00:00 +0800" in markdown
     assert "成功名单（1）" in markdown
-    assert "**好友A** - 已发送 2 条" in markdown
+    assert "**好友A** - 已确认发送 2 条" in markdown
     assert "失败名单（1）" in markdown
     assert "**好友B**，已触发 1 条" in markdown
     assert "发送失败 请重试" in markdown
