@@ -148,18 +148,31 @@ New repository secret
 
 ![创建 Secret](https://img.908988.xyz/file/教程/douyin-auto-fire/BKtXckyQ.webp)
 
-第一次使用至少需要添加下面两个 Secret：
+第一次使用需要添加发送配置，以及一种登录凭证。完整浏览器状态通常比单独 Cookie 更稳定。
 
 | Secret | 内容 | 必须 |
 | --- | --- | --- |
-| `DOUYIN_COOKIE` | Cookie-Editor 导出的完整 Cookie JSON | ✅ |
+| `DOUYIN_STORAGE_STATE` | `scripts/login.py` 生成的完整 `storage-state.json` | 与 Cookie 二选一 |
+| `DOUYIN_COOKIE` | Cookie-Editor 导出的完整 Cookie JSON | 与 Storage State 二选一 |
 | `DOUYIN_CONFIG` | 配置生成器生成的完整配置 JSON | ✅ |
 
-### 5.1 添加 `DOUYIN_COOKIE`
+### 5.1 添加登录凭证
 
 点击 **New repository secret**。
 
-Name 填：
+推荐先在本地运行登录脚本：
+
+```powershell
+python scripts/login.py
+```
+
+扫码登录后，把生成的 `storage-state.json` 完整内容保存为：
+
+```text
+DOUYIN_STORAGE_STATE
+```
+
+也可以继续使用 Cookie。此时 Name 填：
 
 ```text
 DOUYIN_COOKIE
@@ -179,11 +192,11 @@ DOUYIN_CONFIG
 
 Secret 粘贴刚刚生成的完整配置 JSON，然后保存。
 
-配置完成后至少应该存在：
+配置完成后应该存在 `DOUYIN_CONFIG`，以及一种登录凭证：
 
 ```text
-DOUYIN_COOKIE
 DOUYIN_CONFIG
+DOUYIN_STORAGE_STATE 或 DOUYIN_COOKIE
 ```
 
 GitHub 保存 Secret 后不会再次显示具体内容，这是正常现象。
@@ -196,7 +209,7 @@ GitHub 保存 Secret 后不会再次显示具体内容，这是正常现象。
 
 项目提供了 **Dry Run** 模式，用来检查：
 
-- Cookie 是否有效；
+- 登录凭证是否有效；
 - 是否能够正常登录抖音；
 - 是否能够找到目标好友；
 - 配置是否正确。
