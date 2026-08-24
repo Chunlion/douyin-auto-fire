@@ -153,6 +153,7 @@ New repository secret
 | Secret | 内容 | 必须 |
 | --- | --- | --- |
 | `DOUYIN_STORAGE_STATE` | `scripts/login.py` 生成的完整 `storage-state.json` | 与 Cookie 二选一 |
+| `DOUYIN_STORAGE_STATE_GZIP_BASE64` | gzip 压缩并 Base64 编码的 Storage State | 文件超过 48 KB 时使用 |
 | `DOUYIN_COOKIE` | Cookie-Editor 导出的完整 Cookie JSON | 与 Storage State 二选一 |
 | `DOUYIN_CONFIG` | 配置生成器生成的完整配置 JSON | ✅ |
 
@@ -171,6 +172,8 @@ python scripts/login.py
 ```text
 DOUYIN_STORAGE_STATE
 ```
+
+如果文件超过 GitHub Secret 的 48 KB 上限，压缩并编码后保存为 `DOUYIN_STORAGE_STATE_GZIP_BASE64`。工作流会自动解压。
 
 也可以继续使用 Cookie。此时 Name 填：
 

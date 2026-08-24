@@ -23,6 +23,7 @@ jobs:
       contents: read
     env:
       DOUYIN_STORAGE_STATE: ${{ secrets.DOUYIN_STORAGE_STATE }}
+      DOUYIN_STORAGE_STATE_GZIP_BASE64: ${{ secrets.DOUYIN_STORAGE_STATE_GZIP_BASE64 }}
       DOUYIN_COOKIE: ${{ secrets.DOUYIN_COOKIE }}
       DOUYIN_CONFIG: ${{ secrets.DOUYIN_CONFIG }}
       DINGTALK_WEBHOOK: ${{ secrets.DINGTALK_WEBHOOK }}
@@ -39,7 +40,11 @@ jobs:
       - run: python -m playwright install --with-deps chromium
       - name: Write protected configuration
         shell: bash
-        run: printf '%s' "$DOUYIN_CONFIG" > config.json
+        run: |
+          printf '%s' "$DOUYIN_CONFIG" > config.json
+          if [[ -n "$DOUYIN_STORAGE_STATE_GZIP_BASE64" ]]; then
+            printf '%s' "$DOUYIN_STORAGE_STATE_GZIP_BASE64" | base64 --decode | gzip --decompress > storage-state.json
+          fi
       - name: Write multi-account configuration
         shell: bash
         env:
