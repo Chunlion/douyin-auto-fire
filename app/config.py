@@ -33,6 +33,7 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         trace=_parse_bool(os.getenv("TRACE", "true"), "TRACE"),
         dingtalk_webhook=dingtalk_webhook,
         dingtalk_secret=dingtalk_secret,
+        wecom_webhook=_optional_env("WECOM_WEBHOOK"),
     )
 
 

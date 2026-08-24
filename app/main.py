@@ -16,7 +16,7 @@ from app.config import ConfigError, load_settings, load_task
 from app.douyin import DouyinChat
 from app.history import AlreadyRunningError, History, run_lock
 from app.models import Settings, TargetResult
-from app.notifier import send_dingtalk_notification
+from app.notifier import send_dingtalk_notification, send_wecom_notification
 from app.privacy import RedactingFormatter, build_target_aliases, redact_text, target_alias
 from app.sender import send_message
 
@@ -135,6 +135,7 @@ async def run(dry_run: bool = False, env_file: str | None = None) -> int:
 
     _write_results(settings.artifacts_dir, task.task_id, dry_run, results, aliases)
     await _notify_dingtalk(settings, task.task_id, dry_run, results, screenshots)
+    await _notify_wecom(settings, task.task_id, dry_run, results, screenshots)
     succeeded = sum(result.status == "success" for result in results)
     failed = sum(result.status == "failed" for result in results)
     LOGGER.info("执行结束: 成功 %d，失败 %d", succeeded, failed)
@@ -258,6 +259,22 @@ async def _notify_dingtalk(
         LOGGER.info("钉钉通知发送成功")
     except Exception:
         LOGGER.exception("钉钉通知发送失败，不影响本次任务结果")
+
+
+async def _notify_wecom(
+    settings: Settings,
+    task_id: str,
+    dry_run: bool,
+    results: list[TargetResult],
+    screenshots: list[Path],
+) -> None:
+    if not settings.wecom_webhook:
+        return
+    try:
+        await send_wecom_notification(settings.wecom_webhook, task_id, dry_run, results, screenshots)
+        LOGGER.info("企业微信通知发送成功")
+    except Exception:
+        LOGGER.exception("企业微信通知发送失败，不影响本次任务结果")
 
 
 def _trace_path(artifacts_dir: Path) -> Path:

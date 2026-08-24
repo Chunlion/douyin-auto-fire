@@ -17,6 +17,7 @@ from app.models import TargetResult
 
 MAX_RESULTS_PER_SECTION = 15
 MAX_MARKDOWN_BYTES = 18_000
+WECOM_MAX_MARKDOWN_BYTES = 4_096
 NOTIFY_TIMEZONE = timezone(timedelta(hours=8), name="Asia/Shanghai")
 
 
@@ -34,7 +35,22 @@ async def send_dingtalk_notification(
         "markdown": {"title": title, "text": markdown},
         "at": {"isAtAll": False},
     }
-    await asyncio.to_thread(_post_json, _signed_webhook_url(webhook, secret), payload)
+    await asyncio.to_thread(_post_json, _signed_webhook_url(webhook, secret), payload, "钉钉")
+
+
+async def send_wecom_notification(
+    webhook: str,
+    task_id: str,
+    dry_run: bool,
+    results: list[TargetResult],
+    screenshots: list[Path],
+) -> None:
+    _, markdown = build_dingtalk_markdown(task_id, dry_run, results, screenshots)
+    payload = {
+        "msgtype": "markdown",
+        "markdown": {"content": _truncate_utf8(markdown, WECOM_MAX_MARKDOWN_BYTES)},
+    }
+    await asyncio.to_thread(_post_json, _validated_wecom_webhook_url(webhook), payload, "企业微信")
 
 
 def build_dingtalk_markdown(
@@ -110,19 +126,35 @@ def _signed_webhook_url(webhook: str, secret: str, timestamp_ms: int | None = No
     return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, urlencode(query), parsed.fragment))
 
 
-def _post_json(url: str, payload: dict) -> None:
+def _validated_wecom_webhook_url(webhook: str) -> str:
+    parsed = urlsplit(webhook)
+    query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname != "qyapi.weixin.qq.com"
+        or parsed.username
+        or parsed.password
+        or parsed.path != "/cgi-bin/webhook/send"
+        or not query.get("key")
+        or parsed.fragment
+    ):
+        raise ValueError("WECOM_WEBHOOK 必须是企业微信官方群机器人地址")
+    return webhook
+
+
+def _post_json(url: str, payload: dict, provider: str) -> None:
     request = Request(
         url,
         data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
         headers={"Content-Type": "application/json; charset=utf-8"},
         method="POST",
     )
-    # _signed_webhook_url only permits the official DingTalk HTTPS endpoint.
+    # Callers validate the provider endpoint before this request is created.
     with urlopen(request, timeout=15) as response:  # nosec B310
         body = response.read().decode("utf-8")
     result = json.loads(body)
     if result.get("errcode") != 0:
-        raise RuntimeError(f"钉钉机器人返回错误: {result.get('errmsg', body)}")
+        raise RuntimeError(f"{provider}机器人返回错误: {result.get('errmsg', body)}")
 
 
 def _github_run_url() -> str | None:

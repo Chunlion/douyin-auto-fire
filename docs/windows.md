@@ -309,7 +309,7 @@ Remove-Item storage-state.json
 
 ---
 
-## 13. 配置钉钉通知（可选）
+## 13. 配置任务通知（可选）
 
 如果希望每次运行后收到钉钉通知，在 `.env` 中继续加入：
 
@@ -327,6 +327,14 @@ HEADLESS=true
 DINGTALK_WEBHOOK=https://oapi.dingtalk.com/robot/send?access_token=xxxx
 DINGTALK_SECRET=SECxxxx
 ```
+
+企业微信群机器人只需配置：
+
+```env
+WECOM_WEBHOOK=https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxxx
+```
+
+两种通知可以同时启用。Webhook 不要提交到 GitHub。
 
 ---
 

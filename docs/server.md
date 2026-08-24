@@ -211,6 +211,14 @@ DINGTALK_SECRET=你的钉钉Secret
 
 `DINGTALK_WEBHOOK` 和 `DINGTALK_SECRET` 必须同时填写。
 
+企业微信群机器人只需加入：
+
+```env
+WECOM_WEBHOOK=https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxxx
+```
+
+两种通知可以同时启用。Webhook 不要提交到 GitHub。
+
 保存后可以限制 `.env` 权限：
 
 ```bash

@@ -3,13 +3,20 @@ import hashlib
 import hmac
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import AsyncMock
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
 from app.config import ConfigError, load_settings
 from app.models import TargetResult
-from app.notifier import _signed_webhook_url, build_dingtalk_markdown
+from app.notifier import (
+    WECOM_MAX_MARKDOWN_BYTES,
+    _signed_webhook_url,
+    _validated_wecom_webhook_url,
+    build_dingtalk_markdown,
+    send_wecom_notification,
+)
 
 
 def test_signed_webhook_url_uses_dingtalk_hmac() -> None:
@@ -41,6 +48,42 @@ def test_signed_webhook_url_uses_dingtalk_hmac() -> None:
 def test_signed_webhook_url_rejects_untrusted_destinations(webhook: str) -> None:
     with pytest.raises(ValueError, match="oapi.dingtalk.com"):
         _signed_webhook_url(webhook, "SEC-test-secret")
+
+
+def test_validates_wecom_webhook() -> None:
+    webhook = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=test-key"
+
+    assert _validated_wecom_webhook_url(webhook) == webhook
+
+
+@pytest.mark.parametrize(
+    "webhook",
+    [
+        "http://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=test-key",
+        "https://example.com/cgi-bin/webhook/send?key=test-key",
+        "https://qyapi.weixin.qq.com/cgi-bin/webhook/send",
+        "https://qyapi.weixin.qq.com/other?key=test-key",
+    ],
+)
+def test_rejects_untrusted_wecom_webhook(webhook: str) -> None:
+    with pytest.raises(ValueError, match="企业微信官方群机器人地址"):
+        _validated_wecom_webhook_url(webhook)
+
+
+@pytest.mark.asyncio
+async def test_sends_wecom_markdown_within_size_limit(monkeypatch) -> None:
+    to_thread = AsyncMock()
+    monkeypatch.setattr("app.notifier.asyncio.to_thread", to_thread)
+    webhook = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=test-key"
+    results = [TargetResult(target=f"好友{index}", status="failed", error="失败" * 500) for index in range(20)]
+
+    await send_wecom_notification(webhook, "daily-streak", False, results, [])
+
+    _, called_webhook, payload, provider = to_thread.await_args.args
+    assert called_webhook == webhook
+    assert provider == "企业微信"
+    assert payload["msgtype"] == "markdown"
+    assert len(payload["markdown"]["content"].encode("utf-8")) <= WECOM_MAX_MARKDOWN_BYTES
 
 
 def test_markdown_lists_successes_failures_and_screenshots(monkeypatch) -> None:

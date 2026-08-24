@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from app.config import ConfigError, load_task
+from app.config import ConfigError, load_settings, load_task
 from app.models import Settings
 
 
@@ -25,6 +25,14 @@ def write_config(tmp_path: Path, payload: dict) -> Path:
     path = config_dir / "tasks.json"
     path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
     return path
+
+
+def test_loads_wecom_webhook(monkeypatch, tmp_path: Path) -> None:
+    webhook = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=test-key"
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("WECOM_WEBHOOK", webhook)
+
+    assert load_settings().wecom_webhook == webhook
 
 
 def test_loads_multiple_targets_and_text(tmp_path: Path) -> None:
