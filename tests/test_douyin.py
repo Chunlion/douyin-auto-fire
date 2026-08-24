@@ -221,6 +221,13 @@ async def test_chat_open_error_accepts_header_composer_and_selected_target() -> 
 
 
 @pytest.mark.asyncio
+async def test_chat_open_accepts_selected_remark_when_header_uses_another_name() -> None:
+    page = _routed_page(header_text="抖音昵称", selected_name="好友A", composer_visible=True)
+
+    assert await DouyinChat(page)._chat_open_error("好友A") is None
+
+
+@pytest.mark.asyncio
 async def test_chat_open_error_rejects_name_outside_header() -> None:
     page = _routed_page(header_text=None, selected_name=None, composer_visible=True)
 

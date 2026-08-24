@@ -154,8 +154,8 @@ class DouyinChat:
                     break
             if current_matches:
                 break
-        current_valid = current_matches if current_rows_seen else True
-        if composer_visible and header_matches and current_valid:
+        identity_matches = current_matches if current_rows_seen else header_matches
+        if composer_visible and identity_matches:
             return None
         current_status = "匹配" if current_matches else "不匹配" if current_rows_seen else "未检测"
         return PageOperationError(
