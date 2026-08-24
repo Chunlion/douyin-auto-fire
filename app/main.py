@@ -197,7 +197,7 @@ def _configure_logging(
 
 async def _screenshot(page, artifacts_dir: Path, label: str) -> Path | None:
     safe_label = re.sub(r"[^A-Za-z0-9_.\-一-鿿]+", "_", label).strip("_")
-    suffix = hashlib.sha1(label.encode("utf-8")).hexdigest()[:6]
+    suffix = hashlib.sha256(label.encode("utf-8")).hexdigest()[:6]
     safe_label = f"{safe_label}-{suffix}" if safe_label else f"failure-{suffix}"
     directory = artifacts_dir / "screenshots"
     directory.mkdir(parents=True, exist_ok=True)

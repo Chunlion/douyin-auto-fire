@@ -30,10 +30,24 @@ def test_signed_webhook_url_uses_dingtalk_hmac() -> None:
     assert query["sign"] == [expected]
 
 
+@pytest.mark.parametrize(
+    "webhook",
+    [
+        "http://oapi.dingtalk.com/robot/send?access_token=token",
+        "https://example.com/robot/send?access_token=token",
+        "file:///tmp/webhook",
+    ],
+)
+def test_signed_webhook_url_rejects_untrusted_destinations(webhook: str) -> None:
+    with pytest.raises(ValueError, match="oapi.dingtalk.com"):
+        _signed_webhook_url(webhook, "SEC-test-secret")
+
+
 def test_markdown_lists_successes_failures_and_screenshots(monkeypatch) -> None:
     monkeypatch.setenv("GITHUB_SERVER_URL", "https://github.com")
     monkeypatch.setenv("GITHUB_REPOSITORY", "owner/repo")
     monkeypatch.setenv("GITHUB_RUN_ID", "123")
+    monkeypatch.setenv("UPLOAD_SENSITIVE_DIAGNOSTICS", "true")
     results = [
         TargetResult(target="好友A", status="success", sent=2),
         TargetResult(target="好友B", status="failed", sent=1, error="发送失败\n请重试"),
@@ -56,6 +70,22 @@ def test_markdown_lists_successes_failures_and_screenshots(monkeypatch) -> None:
     assert "发送失败 请重试" in markdown
     assert "`friend-b.png`" in markdown
     assert "https://github.com/owner/repo/actions/runs/123" in markdown
+
+
+def test_markdown_does_not_link_sensitive_artifacts_by_default(monkeypatch) -> None:
+    monkeypatch.setenv("GITHUB_SERVER_URL", "https://github.com")
+    monkeypatch.setenv("GITHUB_REPOSITORY", "owner/repo")
+    monkeypatch.setenv("GITHUB_RUN_ID", "123")
+    monkeypatch.delenv("UPLOAD_SENSITIVE_DIAGNOSTICS", raising=False)
+
+    _, markdown = build_dingtalk_markdown(
+        "daily-streak",
+        False,
+        [TargetResult(target="好友A", status="failed", error="发送失败")],
+        [Path("artifacts/screenshots/friend-a.png")],
+    )
+
+    assert "https://github.com/owner/repo/actions/runs/123" not in markdown
 
 
 def test_dingtalk_webhook_and_secret_must_be_configured_together(monkeypatch) -> None:

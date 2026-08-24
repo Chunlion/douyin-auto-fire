@@ -99,10 +99,12 @@ def build_dingtalk_markdown(
 
 
 def _signed_webhook_url(webhook: str, secret: str, timestamp_ms: int | None = None) -> str:
+    parsed = urlsplit(webhook)
+    if parsed.scheme != "https" or parsed.hostname != "oapi.dingtalk.com" or parsed.username or parsed.password:
+        raise ValueError("DINGTALK_WEBHOOK 必须使用 https://oapi.dingtalk.com")
     timestamp = timestamp_ms if timestamp_ms is not None else int(time.time() * 1000)
     string_to_sign = f"{timestamp}\n{secret}".encode("utf-8")
     signature = base64.b64encode(hmac.new(secret.encode("utf-8"), string_to_sign, hashlib.sha256).digest()).decode()
-    parsed = urlsplit(webhook)
     query = parse_qsl(parsed.query, keep_blank_values=True)
     query.extend((('timestamp', str(timestamp)), ('sign', signature)))
     return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, urlencode(query), parsed.fragment))
@@ -115,7 +117,8 @@ def _post_json(url: str, payload: dict) -> None:
         headers={"Content-Type": "application/json; charset=utf-8"},
         method="POST",
     )
-    with urlopen(request, timeout=15) as response:
+    # _signed_webhook_url only permits the official DingTalk HTTPS endpoint.
+    with urlopen(request, timeout=15) as response:  # nosec B310
         body = response.read().decode("utf-8")
     result = json.loads(body)
     if result.get("errcode") != 0:
@@ -123,6 +126,8 @@ def _post_json(url: str, payload: dict) -> None:
 
 
 def _github_run_url() -> str | None:
+    if os.getenv("UPLOAD_SENSITIVE_DIAGNOSTICS", "").strip().lower() != "true":
+        return None
     server = os.getenv("GITHUB_SERVER_URL")
     repository = os.getenv("GITHUB_REPOSITORY")
     run_id = os.getenv("GITHUB_RUN_ID")

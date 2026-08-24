@@ -383,20 +383,31 @@ DOUYIN_CONFIG_ACCOUNT2
 
 ## 12. 运行失败后的诊断文件
 
-如果 GitHub Actions 运行失败，项目会自动上传诊断文件，可能包括：
+如果 GitHub Actions 运行失败，项目默认只上传已脱敏的诊断文件：
 
 ```text
 run.log
 result.json
-screenshots/
-traces/
 ```
 
 进入失败的 Workflow 页面，在页面底部找到 **Artifacts** 即可下载。
 
 失败诊断 Artifact 默认保留 **3 天**。
 
-这些文件可以帮助判断：
+截图和 Playwright Trace 包含页面、DOM 和网络信息，公开仓库默认不上传。确需上传时，在仓库 **Settings → Secrets and variables → Actions → Variables** 中添加：
+
+```text
+UPLOAD_SENSITIVE_DIAGNOSTICS=true
+```
+
+启用后，失败任务还会上传：
+
+```text
+screenshots/
+traces/
+```
+
+诊断文件可以帮助判断：
 
 - Cookie 是否失效；
 - 是否出现安全验证；
@@ -404,7 +415,7 @@ traces/
 - 页面结构是否变化；
 - Playwright 在哪一步失败。
 
-> ⚠️ 截图和日志可能包含聊天内容或账号相关信息，请不要直接公开上传。
+> ⚠️ 截图和 Trace 可能包含聊天内容、登录状态或请求数据。仅在排错时临时开启，下载后删除对应 Artifact，并移除变量。
 
 ---
 
