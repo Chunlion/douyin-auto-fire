@@ -22,13 +22,6 @@ jobs:
     permissions:
       contents: read
     env:
-      DOUYIN_STORAGE_STATE: ${{ secrets.DOUYIN_STORAGE_STATE }}
-      DOUYIN_STORAGE_STATE_GZIP_BASE64: ${{ secrets.DOUYIN_STORAGE_STATE_GZIP_BASE64 }}
-      DOUYIN_COOKIE: ${{ secrets.DOUYIN_COOKIE }}
-      DOUYIN_CONFIG: ${{ secrets.DOUYIN_CONFIG }}
-      DINGTALK_WEBHOOK: ${{ secrets.DINGTALK_WEBHOOK }}
-      DINGTALK_SECRET: ${{ secrets.DINGTALK_SECRET }}
-      WECOM_WEBHOOK: ${{ secrets.WECOM_WEBHOOK }}
       UPLOAD_SENSITIVE_DIAGNOSTICS: ${{ vars.UPLOAD_SENSITIVE_DIAGNOSTICS }}
       HEADLESS: "true"
     steps:
@@ -40,10 +33,16 @@ jobs:
       - run: python -m playwright install --with-deps chromium
       - name: Write protected configuration
         shell: bash
+        env:
+          DOUYIN_CONFIG: ${{ secrets.DOUYIN_CONFIG }}
+          DOUYIN_STORAGE_STATE: ${{ secrets.DOUYIN_STORAGE_STATE }}
+          DOUYIN_STORAGE_STATE_GZIP_BASE64: ${{ secrets.DOUYIN_STORAGE_STATE_GZIP_BASE64 }}
         run: |
           printf '%s' "$DOUYIN_CONFIG" > config.json
           if [[ -n "$DOUYIN_STORAGE_STATE_GZIP_BASE64" ]]; then
             printf '%s' "$DOUYIN_STORAGE_STATE_GZIP_BASE64" | base64 --decode | gzip --decompress > storage-state.json
+          elif [[ -n "$DOUYIN_STORAGE_STATE" ]]; then
+            printf '%s' "$DOUYIN_STORAGE_STATE" > storage-state.json
           fi
       - name: Write multi-account configuration
         shell: bash
@@ -115,12 +114,21 @@ jobs:
           PY
       - name: Run
         shell: bash
+        env:
+          DOUYIN_COOKIE: ${{ secrets.DOUYIN_COOKIE }}
+          DINGTALK_WEBHOOK: ${{ secrets.DINGTALK_WEBHOOK }}
+          DINGTALK_SECRET: ${{ secrets.DINGTALK_SECRET }}
+          WECOM_WEBHOOK: ${{ secrets.WECOM_WEBHOOK }}
         run: |
           if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.dry_run }}" == "true" ]]; then
             python run.py --dry-run
           else
             python run.py
           fi
+      - name: Remove protected configuration
+        if: always()
+        shell: bash
+        run: rm -f -- config.json storage-state.json .env.account* config/accounts.json config/tasks/account*.json
       - name: Upload redacted diagnostics
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
