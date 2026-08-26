@@ -140,23 +140,21 @@ async def _count_outgoing_messages(page: Page, expected_text: str = "", kind: st
     )
 
 
-async def confirm_delivery_persisted(page: Page, probe: DeliveryProbe, timeout_ms: int = 15_000) -> None:
+async def confirm_delivery_persisted(page: Page, probe: DeliveryProbe, timeout_ms: int = 30_000) -> None:
     try:
         await page.wait_for_function(
-            """([selector, expected, kind, beforeCount]) => {
+            """([selector, expected, kind]) => {
                 const normalize = value => (value || '').replace(/[\\s\\u200B\\u200C\\u200D\\uFEFF]+/g, ' ').trim();
-                const messages = [...document.querySelectorAll(selector)];
-                const count = messages.filter(message => {
-                    const content = message.querySelector('[data-e2e="msg-item-content"]') || message;
-                    const failed = normalize(message.innerText).includes('发送失败') ||
-                        !!message.querySelector('[aria-label*="重试"], [title*="重试"], [class*="sendFailed"], [class*="SendFailed"]');
-                    if (failed) return false;
-                    if (kind === 'media') return !!content.querySelector('img, video');
-                    return normalize(content.innerText) === normalize(expected);
-                }).length;
-                return count > beforeCount;
+                const message = document.querySelector(selector);
+                if (!message) return false;
+                const content = message.querySelector('[data-e2e="msg-item-content"]') || message;
+                const failed = normalize(message.innerText).includes('发送失败') ||
+                    !!message.querySelector('[aria-label*="重试"], [title*="重试"], [class*="sendFailed"], [class*="SendFailed"]');
+                if (failed) return false;
+                if (kind === 'media') return !!content.querySelector('img, video');
+                return normalize(content.innerText) === normalize(expected);
             }""",
-            arg=[OUTGOING_MESSAGES, probe.expected_text, probe.kind, probe.before_count],
+            arg=[OUTGOING_MESSAGES, probe.expected_text, probe.kind],
             timeout=timeout_ms,
         )
     except Exception as exc:

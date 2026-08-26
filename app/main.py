@@ -22,6 +22,8 @@ from app.sender import DeliveryProbe, DeliveryUnconfirmedError, confirm_delivery
 
 
 LOGGER = logging.getLogger("douyin_sender")
+DELIVERY_SETTLE_DELAY_SECONDS = 10
+DELIVERY_RETRY_DELAY_SECONDS = 10
 
 
 async def run(dry_run: bool = False, env_file: str | None = None) -> int:
@@ -330,6 +332,7 @@ async def _confirm_server_persistence(
     attempts: int = 2,
 ) -> None:
     last_error: DeliveryUnconfirmedError | None = None
+    await asyncio.sleep(DELIVERY_SETTLE_DELAY_SECONDS)
     for attempt in range(1, attempts + 1):
         await open_private_messages(page)
         await chat.open_target(target_name, retries=target_open_retries)
@@ -340,6 +343,7 @@ async def _confirm_server_persistence(
             last_error = exc
             if attempt < attempts:
                 LOGGER.warning("服务器历史暂未出现新增消息，重新加载后复查")
+                await asyncio.sleep(DELIVERY_RETRY_DELAY_SECONDS)
     if last_error is not None:
         raise last_error
     raise DeliveryUnconfirmedError("未执行服务器历史确认，发送结果待确认")

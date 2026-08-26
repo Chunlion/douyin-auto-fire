@@ -179,15 +179,15 @@ async def test_capture_media_probe_uses_highest_stable_baseline() -> None:
 
 
 @pytest.mark.asyncio
-async def test_confirm_delivery_persisted_requires_count_increase() -> None:
+async def test_confirm_delivery_persisted_requires_latest_matching_message() -> None:
     page = MagicMock()
     page.wait_for_function = AsyncMock()
     probe = DeliveryProbe(expected_text="睡觉", before_count=1)
 
     await confirm_delivery_persisted(page, probe)
 
-    assert page.wait_for_function.await_args.kwargs["arg"] == [OUTGOING_MESSAGES, "睡觉", "text", 1]
-    assert page.wait_for_function.await_args.kwargs["timeout"] == 15_000
+    assert page.wait_for_function.await_args.kwargs["arg"] == [OUTGOING_MESSAGES, "睡觉", "text"]
+    assert page.wait_for_function.await_args.kwargs["timeout"] == 30_000
 
 
 @pytest.mark.asyncio

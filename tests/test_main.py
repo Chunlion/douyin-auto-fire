@@ -160,7 +160,7 @@ async def test_confirms_persisted_messages_and_waits_between_them(monkeypatch, t
     assert confirm_delivery.await_count == 2
     assert open_messages.await_count == 3
     assert chat.open_target.await_count == 3
-    assert sleeps == [0.5]
+    assert sleeps == [10, 0.5, 10]
     history.mark_success.assert_not_called()
     results = notify.await_args.args[3]
     assert [(result.status, result.sent, result.error) for result in results] == [
@@ -213,6 +213,12 @@ async def test_unconfirmed_persisted_message_returns_unknown(monkeypatch, tmp_pa
         "confirm_delivery_persisted",
         confirm_delivery,
     )
+    sleeps = []
+
+    async def fake_sleep(seconds):
+        sleeps.append(seconds)
+
+    monkeypatch.setattr("asyncio.sleep", fake_sleep)
     monkeypatch.setattr(main_module, "_screenshot", AsyncMock(return_value=None))
     monkeypatch.setattr(main_module, "_write_results", MagicMock())
     monkeypatch.setattr(main_module, "_notify_dingtalk", notify)
@@ -223,6 +229,7 @@ async def test_unconfirmed_persisted_message_returns_unknown(monkeypatch, tmp_pa
     assert confirm_delivery.await_count == 2
     assert open_messages.await_count == 3
     assert chat.open_target.await_count == 3
+    assert sleeps == [10, 10]
     results = notify.await_args.args[3]
     assert [(result.status, result.sent, result.error) for result in results] == [
         ("unknown", 0, "重新加载会话后未检测到新增消息，送达待确认")
