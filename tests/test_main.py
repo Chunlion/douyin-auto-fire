@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.browser import AuthenticationError
+from app.browser import AuthenticationError, SearchBoxNotReadyError
 from app.models import Message, Settings, Target, TaskConfig
 from app.sender import DeliveryProbe, DeliveryUnconfirmedError
 import app.main as main_module
@@ -128,11 +128,12 @@ async def test_confirms_persisted_messages_and_waits_between_them(monkeypatch, t
     chat.open_target = AsyncMock()
     send_message = AsyncMock(
         side_effect=[
-            DeliveryProbe(expected_text="一", before_count=0),
-            DeliveryProbe(expected_text="二", before_count=0),
+            DeliveryProbe(expected_text="一"),
+            DeliveryProbe(expected_text="二"),
         ]
     )
     confirm_delivery = AsyncMock()
+    confirm_settled = AsyncMock()
     open_messages = AsyncMock()
     notify = AsyncMock()
     sleeps = []
@@ -149,6 +150,7 @@ async def test_confirms_persisted_messages_and_waits_between_them(monkeypatch, t
     monkeypatch.setattr(main_module, "verify_login", AsyncMock())
     monkeypatch.setattr(main_module, "send_message", send_message)
     monkeypatch.setattr(main_module, "confirm_delivery_persisted", confirm_delivery)
+    monkeypatch.setattr(main_module, "confirm_delivery_settled", confirm_settled)
     monkeypatch.setattr("asyncio.sleep", fake_sleep)
     monkeypatch.setattr(main_module, "_screenshot", AsyncMock(return_value=None))
     monkeypatch.setattr(main_module, "_write_results", MagicMock())
@@ -158,6 +160,7 @@ async def test_confirms_persisted_messages_and_waits_between_them(monkeypatch, t
     assert await main_module.run() == 0
     assert send_message.await_count == 2
     assert confirm_delivery.await_count == 2
+    assert confirm_settled.await_count == 2
     assert open_messages.await_count == 3
     assert chat.open_target.await_count == 3
     assert sleeps == [10, 0.5, 10]
@@ -201,7 +204,7 @@ async def test_unconfirmed_persisted_message_returns_unknown(monkeypatch, tmp_pa
     monkeypatch.setattr(main_module, "open_private_messages", open_messages)
     monkeypatch.setattr(main_module, "DouyinChat", MagicMock(return_value=chat))
     monkeypatch.setattr(main_module, "verify_login", AsyncMock())
-    send_message = AsyncMock(return_value=DeliveryProbe(expected_text="测试", before_count=0))
+    send_message = AsyncMock(return_value=DeliveryProbe(expected_text="测试"))
     monkeypatch.setattr(
         main_module,
         "send_message",
@@ -213,6 +216,8 @@ async def test_unconfirmed_persisted_message_returns_unknown(monkeypatch, tmp_pa
         "confirm_delivery_persisted",
         confirm_delivery,
     )
+    confirm_settled = AsyncMock()
+    monkeypatch.setattr(main_module, "confirm_delivery_settled", confirm_settled)
     sleeps = []
 
     async def fake_sleep(seconds):
@@ -227,6 +232,7 @@ async def test_unconfirmed_persisted_message_returns_unknown(monkeypatch, tmp_pa
     assert await main_module.run() == 1
     send_message.assert_awaited_once()
     assert confirm_delivery.await_count == 2
+    confirm_settled.assert_awaited_once()
     assert open_messages.await_count == 3
     assert chat.open_target.await_count == 3
     assert sleeps == [10, 10]
@@ -234,3 +240,64 @@ async def test_unconfirmed_persisted_message_returns_unknown(monkeypatch, tmp_pa
     assert [(result.status, result.sent, result.error) for result in results] == [
         ("unknown", 0, "重新加载会话后未检测到新增消息，送达待确认")
     ]
+
+
+@pytest.mark.asyncio
+async def test_server_confirmation_retries_transient_navigation_failure(monkeypatch) -> None:
+    page = MagicMock()
+    chat = MagicMock()
+    chat.open_target = AsyncMock()
+    open_messages = AsyncMock(side_effect=[SearchBoxNotReadyError("页面渲染慢"), None])
+    confirm_settled = AsyncMock()
+    confirm_persisted = AsyncMock()
+    sleeps = []
+
+    async def fake_sleep(seconds):
+        sleeps.append(seconds)
+
+    monkeypatch.setattr(main_module, "open_private_messages", open_messages)
+    monkeypatch.setattr(main_module, "confirm_delivery_settled", confirm_settled)
+    monkeypatch.setattr(main_module, "confirm_delivery_persisted", confirm_persisted)
+    monkeypatch.setattr("asyncio.sleep", fake_sleep)
+
+    await main_module._confirm_server_persistence(
+        page,
+        chat,
+        "好友A",
+        DeliveryProbe(expected_text="测试"),
+        target_open_retries=1,
+    )
+
+    confirm_settled.assert_awaited_once()
+    assert open_messages.await_count == 2
+    chat.open_target.assert_awaited_once_with("好友A", retries=1)
+    confirm_persisted.assert_awaited_once()
+    assert sleeps == [10, 10]
+
+
+@pytest.mark.asyncio
+async def test_server_confirmation_does_not_retry_authentication_failure(monkeypatch) -> None:
+    page = MagicMock()
+    chat = MagicMock()
+    chat.open_target = AsyncMock()
+    open_messages = AsyncMock(side_effect=AuthenticationError("登录失效"))
+    confirm_settled = AsyncMock()
+    sleep = AsyncMock()
+
+    monkeypatch.setattr(main_module, "open_private_messages", open_messages)
+    monkeypatch.setattr(main_module, "confirm_delivery_settled", confirm_settled)
+    monkeypatch.setattr("asyncio.sleep", sleep)
+
+    with pytest.raises(AuthenticationError, match="登录失效"):
+        await main_module._confirm_server_persistence(
+            page,
+            chat,
+            "好友A",
+            DeliveryProbe(expected_text="测试"),
+            target_open_retries=1,
+        )
+
+    confirm_settled.assert_awaited_once()
+    open_messages.assert_awaited_once()
+    chat.open_target.assert_not_awaited()
+    sleep.assert_awaited_once_with(10)

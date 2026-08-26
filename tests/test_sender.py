@@ -10,7 +10,6 @@ from app.sender import (
     DeliveryUnconfirmedError,
     LATEST_OUTGOING_MESSAGE,
     SEND_BUTTONS,
-    _capture_delivery_probe,
     _click_and_confirm_sticker,
     _confirm_outgoing_message,
     _confirm_sticker_sent,
@@ -21,6 +20,7 @@ from app.sender import (
     _trigger_send,
     _wait_for_composer_cleared,
     confirm_delivery_persisted,
+    confirm_delivery_settled,
     send_message,
     send_text,
 )
@@ -47,16 +47,12 @@ async def test_random_message_delegates_to_selected_choice(monkeypatch) -> None:
     message = Message(type="random", choices=(text,))
     monkeypatch.setattr("app.sender.random.choice", lambda choices: choices[0])
     monkeypatch.setattr("app.sender._mark_latest_outgoing_message", AsyncMock(return_value=("anchor", "")))
-    monkeypatch.setattr(
-        "app.sender._capture_delivery_probe",
-        AsyncMock(return_value=DeliveryProbe(expected_text="你好", before_count=0)),
-    )
     monkeypatch.setattr("app.sender._wait_for_composer_cleared", AsyncMock())
     monkeypatch.setattr("app.sender._confirm_outgoing_message", AsyncMock())
 
     probe = await send_message(page, chat, message, {})
 
-    assert probe == DeliveryProbe(expected_text="你好", before_count=0)
+    assert probe == DeliveryProbe(expected_text="你好")
     page.keyboard.insert_text.assert_awaited_once_with("你好")
     page.keyboard.press.assert_awaited_once_with("Enter")
 
@@ -149,40 +145,10 @@ async def test_send_control_rejects_aria_disabled() -> None:
 
 
 @pytest.mark.asyncio
-async def test_capture_delivery_probe_counts_matching_outgoing_messages() -> None:
-    page = MagicMock()
-    messages = MagicMock()
-    messages.evaluate_all = AsyncMock(return_value=2)
-    page.locator.return_value = messages
-    page.wait_for_timeout = AsyncMock()
-
-    probe = await _capture_delivery_probe(page, "睡觉")
-
-    assert probe == DeliveryProbe(expected_text="睡觉", before_count=2)
-    assert page.locator.call_count == 3
-    assert messages.evaluate_all.call_args.args[1] == ["睡觉", "text"]
-    assert page.wait_for_timeout.await_count == 2
-
-
-@pytest.mark.asyncio
-async def test_capture_media_probe_uses_highest_stable_baseline() -> None:
-    page = MagicMock()
-    messages = MagicMock()
-    messages.evaluate_all = AsyncMock(side_effect=[1, 3, 2])
-    page.locator.return_value = messages
-    page.wait_for_timeout = AsyncMock()
-
-    probe = await _capture_delivery_probe(page, kind="media")
-
-    assert probe == DeliveryProbe(expected_text="", before_count=3, kind="media")
-    assert messages.evaluate_all.call_args.args[1] == ["", "media"]
-
-
-@pytest.mark.asyncio
 async def test_confirm_delivery_persisted_requires_latest_matching_message() -> None:
     page = MagicMock()
     page.wait_for_function = AsyncMock()
-    probe = DeliveryProbe(expected_text="睡觉", before_count=1)
+    probe = DeliveryProbe(expected_text="睡觉")
 
     await confirm_delivery_persisted(page, probe)
 
@@ -196,7 +162,19 @@ async def test_confirm_delivery_persisted_reports_unconfirmed() -> None:
     page.wait_for_function = AsyncMock(side_effect=TimeoutError)
 
     with pytest.raises(DeliveryUnconfirmedError, match="发送结果待确认"):
-        await confirm_delivery_persisted(page, DeliveryProbe(expected_text="睡觉", before_count=1))
+        await confirm_delivery_persisted(page, DeliveryProbe(expected_text="睡觉"))
+
+
+@pytest.mark.asyncio
+async def test_confirm_delivery_settled_rechecks_after_stability_delay() -> None:
+    page = MagicMock()
+    page.wait_for_function = AsyncMock()
+    probe = DeliveryProbe(expected_text="睡觉")
+
+    await confirm_delivery_settled(page, probe)
+
+    assert page.wait_for_function.await_args.kwargs["arg"] == [OUTGOING_MESSAGES, "睡觉", "text"]
+    assert page.wait_for_function.await_args.kwargs["timeout"] == 5_000
 
 
 @pytest.mark.asyncio

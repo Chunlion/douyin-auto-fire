@@ -18,7 +18,13 @@ from app.history import AlreadyRunningError, History, run_lock
 from app.models import Settings, TargetResult
 from app.notifier import send_dingtalk_notification, send_wecom_notification
 from app.privacy import RedactingFormatter, build_target_aliases, redact_text, target_alias
-from app.sender import DeliveryProbe, DeliveryUnconfirmedError, confirm_delivery_persisted, send_message
+from app.sender import (
+    DeliveryProbe,
+    DeliveryUnconfirmedError,
+    confirm_delivery_persisted,
+    confirm_delivery_settled,
+    send_message,
+)
 
 
 LOGGER = logging.getLogger("douyin_sender")
@@ -331,19 +337,24 @@ async def _confirm_server_persistence(
     target_open_retries: int,
     attempts: int = 2,
 ) -> None:
-    last_error: DeliveryUnconfirmedError | None = None
+    last_error: Exception | None = None
     await asyncio.sleep(DELIVERY_SETTLE_DELAY_SECONDS)
+    await confirm_delivery_settled(page, probe)
     for attempt in range(1, attempts + 1):
-        await open_private_messages(page)
-        await chat.open_target(target_name, retries=target_open_retries)
         try:
+            await open_private_messages(page)
+            await chat.open_target(target_name, retries=target_open_retries)
             await confirm_delivery_persisted(page, probe)
             return
-        except DeliveryUnconfirmedError as exc:
+        except (AuthenticationError, RiskControlError, UnexpectedPageError):
+            raise
+        except Exception as exc:
             last_error = exc
             if attempt < attempts:
-                LOGGER.warning("服务器历史暂未出现新增消息，重新加载后复查")
+                LOGGER.warning("服务器历史确认暂时失败（%s），等待后复查", type(exc).__name__)
                 await asyncio.sleep(DELIVERY_RETRY_DELAY_SECONDS)
     if last_error is not None:
-        raise last_error
+        if isinstance(last_error, DeliveryUnconfirmedError):
+            raise last_error
+        raise DeliveryUnconfirmedError("服务器历史确认过程失败，发送结果待确认") from last_error
     raise DeliveryUnconfirmedError("未执行服务器历史确认，发送结果待确认")
