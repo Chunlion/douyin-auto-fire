@@ -175,13 +175,7 @@ Windows 推荐直接使用项目自带的扫码登录脚本。
 .\.venv\Scripts\python.exe scripts\login.py
 ```
 
-程序会自动打开 Chromium。
-
-按照浏览器中的提示完成抖音扫码登录。
-
-登录完成并看到抖音首页后，回到 PowerShell，根据提示按一次 **Enter**。
-
-程序会生成：
+程序会打开 Chromium。扫码登录并完成手机确认后，程序会自动验证私信页并生成：
 
 ```text
 storage-state.json
