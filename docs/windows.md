@@ -169,11 +169,7 @@ config.json
 
 Windows 推荐直接使用项目自带的扫码登录脚本。
 
-执行：
-
-```powershell
-.\.venv\Scripts\python.exe scripts\login.py
-```
+双击项目根目录的 `login.cmd`。
 
 程序会打开 Chromium。扫码登录并完成手机确认后，程序会自动验证私信页并生成：
 

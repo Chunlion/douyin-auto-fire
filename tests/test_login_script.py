@@ -7,6 +7,15 @@ import scripts.login as login_script
 from scripts.login import _click_first_visible, _save_storage_state, _wait_for_login
 
 
+def test_login_cmd_uses_project_virtual_environment() -> None:
+    launcher = Path(__file__).resolve().parents[1] / "login.cmd"
+    content = launcher.read_text(encoding="utf-8")
+
+    assert ".venv\\Scripts\\python.exe" in content
+    assert "scripts\\login.py" in content
+    assert "if not \"%LOGIN_EXIT%\"==\"0\" pause" in content
+
+
 @pytest.mark.asyncio
 async def test_click_first_visible_skips_hidden_candidate() -> None:
     hidden = MagicMock()
