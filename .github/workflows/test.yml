@@ -19,5 +19,5 @@ jobs:
           python-version: "3.11"
       - run: pip install -r requirements-dev.txt
       - run: pip install "pip-audit>=2.10,<3"
-      - run: python -m pip_audit -r requirements.txt
+      - run: python scripts/pip_audit_retry.py
       - run: python -m pytest -q
