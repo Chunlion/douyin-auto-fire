@@ -13,6 +13,7 @@ from app.sender import (
     _click_and_confirm_sticker,
     _confirm_outgoing_message,
     _confirm_sticker_sent,
+    _latest_outgoing_message_identity,
     _publish_ready,
     _restore_composer,
     _send_control_ready,
@@ -46,13 +47,14 @@ async def test_random_message_delegates_to_selected_choice(monkeypatch) -> None:
     text = Message(type="text", content="你好")
     message = Message(type="random", choices=(text,))
     monkeypatch.setattr("app.sender.random.choice", lambda choices: choices[0])
+    monkeypatch.setattr("app.sender._latest_outgoing_message_identity", AsyncMock(return_value="previous-id"))
     monkeypatch.setattr("app.sender._mark_latest_outgoing_message", AsyncMock(return_value=("anchor", "")))
     monkeypatch.setattr("app.sender._wait_for_composer_cleared", AsyncMock())
     monkeypatch.setattr("app.sender._confirm_outgoing_message", AsyncMock())
 
     probe = await send_message(page, chat, message, {})
 
-    assert probe == DeliveryProbe(expected_text="你好")
+    assert probe == DeliveryProbe(expected_text="你好", previous_message_id="previous-id")
     page.keyboard.insert_text.assert_awaited_once_with("你好")
     page.keyboard.press.assert_awaited_once_with("Enter")
 
@@ -148,11 +150,17 @@ async def test_send_control_rejects_aria_disabled() -> None:
 async def test_confirm_delivery_persisted_requires_latest_matching_message() -> None:
     page = MagicMock()
     page.wait_for_function = AsyncMock()
-    probe = DeliveryProbe(expected_text="睡觉")
+    probe = DeliveryProbe(expected_text="睡觉", previous_message_id="previous-id")
 
     await confirm_delivery_persisted(page, probe)
 
-    assert page.wait_for_function.await_args.kwargs["arg"] == [OUTGOING_MESSAGES, "睡觉", "text"]
+    assert page.wait_for_function.await_args.kwargs["arg"] == [
+        OUTGOING_MESSAGES,
+        "睡觉",
+        "text",
+        "previous-id",
+    ]
+    assert "currentMessageId === previousMessageId" in page.wait_for_function.await_args.args[0]
     assert page.wait_for_function.await_args.kwargs["timeout"] == 30_000
 
 
@@ -169,12 +177,34 @@ async def test_confirm_delivery_persisted_reports_unconfirmed() -> None:
 async def test_confirm_delivery_settled_rechecks_after_stability_delay() -> None:
     page = MagicMock()
     page.wait_for_function = AsyncMock()
-    probe = DeliveryProbe(expected_text="睡觉")
+    probe = DeliveryProbe(expected_text="睡觉", previous_message_id="previous-id")
 
     await confirm_delivery_settled(page, probe)
 
-    assert page.wait_for_function.await_args.kwargs["arg"] == [OUTGOING_MESSAGES, "睡觉", "text"]
+    assert page.wait_for_function.await_args.kwargs["arg"] == [
+        OUTGOING_MESSAGES,
+        "睡觉",
+        "text",
+        "previous-id",
+    ]
     assert page.wait_for_function.await_args.kwargs["timeout"] == 5_000
+
+
+@pytest.mark.asyncio
+async def test_latest_outgoing_message_identity_reads_virtual_item_id() -> None:
+    page = MagicMock()
+    page.evaluate = AsyncMock(return_value="message-id")
+
+    assert await _latest_outgoing_message_identity(page) == "message-id"
+    assert page.evaluate.await_args.args[1] == OUTGOING_MESSAGES
+
+
+@pytest.mark.asyncio
+async def test_latest_outgoing_message_identity_requires_existing_message() -> None:
+    page = MagicMock()
+    page.evaluate = AsyncMock(return_value="")
+
+    assert await _latest_outgoing_message_identity(page) == ""
 
 
 @pytest.mark.asyncio

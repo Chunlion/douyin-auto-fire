@@ -79,6 +79,7 @@ class DeliveryUnconfirmedError(PageOperationError):
 class DeliveryProbe:
     expected_text: str
     kind: str = "text"
+    previous_message_id: str = ""
 
 
 async def send_message(
@@ -90,20 +91,31 @@ async def send_message(
     if message.type == "random":
         return await send_message(page, chat, random.choice(message.choices), stickers)
     if message.type == "text":
-        probe = DeliveryProbe(expected_text=message.content or "")
+        probe = DeliveryProbe(
+            expected_text=message.content or "",
+            previous_message_id=await _latest_outgoing_message_identity(page),
+        )
         await send_text(chat, message.content or "")
         return probe
     if message.type == "image":
         if message.path is None:
             raise PageOperationError("图片消息缺少文件路径")
-        probe = DeliveryProbe(expected_text="", kind="media")
+        probe = DeliveryProbe(
+            expected_text="",
+            kind="media",
+            previous_message_id=await _latest_outgoing_message_identity(page),
+        )
         await send_image(page, message.path.as_posix())
         return probe
     if message.type == "douyin_sticker":
         sticker = stickers.get(message.sticker or "")
         if sticker is None:
             raise PageOperationError(f"没有原生表情映射: {message.sticker}")
-        probe = DeliveryProbe(expected_text="", kind="media")
+        probe = DeliveryProbe(
+            expected_text="",
+            kind="media",
+            previous_message_id=await _latest_outgoing_message_identity(page),
+        )
         await send_douyin_sticker(page, sticker)
         return probe
     raise PageOperationError(f"不支持的消息类型: {message.type}")
@@ -125,8 +137,20 @@ async def confirm_delivery_settled(page: Page, probe: DeliveryProbe, timeout_ms:
 
 async def _wait_for_latest_outgoing_match(page: Page, probe: DeliveryProbe, timeout_ms: int) -> None:
     await page.wait_for_function(
-        """([selector, expected, kind]) => {
+        """([selector, expected, kind, previousMessageId]) => {
             const normalize = value => (value || '').replace(/[\\s\\u200B\\u200C\\u200D\\uFEFF]+/g, ' ').trim();
+            const messageId = element => {
+                const fiberKey = Object.getOwnPropertyNames(element).find(key => key.startsWith('__reactFiber$'));
+                let fiber = fiberKey ? element[fiberKey] : null;
+                for (let depth = 0; fiber && depth < 12; depth += 1, fiber = fiber.return) {
+                    const virtualItem = fiber.memoizedProps?.virtualItem;
+                    if (virtualItem?.id !== undefined && virtualItem?.id !== null) {
+                        return String(virtualItem.id);
+                    }
+                    if (virtualItem && typeof fiber.key === 'string' && fiber.key) return fiber.key;
+                }
+                return '';
+            };
             const messages = [...document.querySelectorAll(selector)];
             const message = messages.reduce((latest, candidate) => {
                 if (!latest) return candidate;
@@ -137,6 +161,8 @@ async def _wait_for_latest_outgoing_match(page: Page, probe: DeliveryProbe, time
                 return latest;
             }, null);
             if (!message) return false;
+            const currentMessageId = messageId(message);
+            if (!currentMessageId || currentMessageId === previousMessageId) return false;
             const content = message.querySelector('[data-e2e="msg-item-content"]') || message;
             const failed = normalize(message.innerText).includes('发送失败') ||
                 !!message.querySelector('[aria-label*="重试"], [title*="重试"], [class*="sendFailed"], [class*="SendFailed"]');
@@ -144,9 +170,36 @@ async def _wait_for_latest_outgoing_match(page: Page, probe: DeliveryProbe, time
             if (kind === 'media') return !!content.querySelector('img, video');
             return normalize(content.innerText) === normalize(expected);
         }""",
-        arg=[OUTGOING_MESSAGES, probe.expected_text, probe.kind],
+        arg=[OUTGOING_MESSAGES, probe.expected_text, probe.kind, probe.previous_message_id],
         timeout=timeout_ms,
     )
+
+
+async def _latest_outgoing_message_identity(page: Page) -> str:
+    identity = await page.evaluate(
+        """selector => {
+            const messages = [...document.querySelectorAll(selector)];
+            const element = messages.reduce((latest, candidate) => {
+                if (!latest) return candidate;
+                const latestIndex = Number(latest.closest('[data-index]')?.getAttribute('data-index'));
+                const candidateIndex = Number(candidate.closest('[data-index]')?.getAttribute('data-index'));
+                if (!Number.isFinite(candidateIndex)) return latest;
+                if (!Number.isFinite(latestIndex) || candidateIndex < latestIndex) return candidate;
+                return latest;
+            }, null);
+            if (!element) return '';
+            const fiberKey = Object.getOwnPropertyNames(element).find(key => key.startsWith('__reactFiber$'));
+            let fiber = fiberKey ? element[fiberKey] : null;
+            for (let depth = 0; fiber && depth < 12; depth += 1, fiber = fiber.return) {
+                const virtualItem = fiber.memoizedProps?.virtualItem;
+                if (virtualItem?.id !== undefined && virtualItem?.id !== null) return String(virtualItem.id);
+                if (virtualItem && typeof fiber.key === 'string' && fiber.key) return fiber.key;
+            }
+            return '';
+        }""",
+        OUTGOING_MESSAGES,
+    )
+    return identity if isinstance(identity, str) else ""
 
 
 async def send_text(chat: DouyinChat, content: str) -> None:
