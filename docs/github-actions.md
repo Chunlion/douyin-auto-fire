@@ -275,41 +275,18 @@ dry_run = false
 .github/workflows/send.yml
 ```
 
-当前默认配置：
-
-```yaml
-schedule:
-  - cron: "0 0 * * *"
-    timezone: "Asia/Shanghai"
-```
-
-表示每天北京时间 **00:00** 自动运行一次。
+默认每天北京时间 **05:24** 开始执行。工作流每 15 分钟检查一次；GitHub 延迟或丢失单次触发后，后续检查会自动补跑。当天成功后不再重复发送。
 
 定时触发会直接进行真实发送，不会自动进入 Dry Run。
 
 ### 修改运行时间
 
-例如每天北京时间 **08:30**：
+打开仓库 `Settings` → `Secrets and variables` → `Actions` → `Variables`，设置：
 
-```yaml
-schedule:
-  - cron: "30 8 * * *"
-    timezone: "Asia/Shanghai"
-```
+- `DOUYIN_SCHEDULE_TIME`：`HH:MM`，例如 `08:30`
+- `DOUYIN_SCHEDULE_TIMEZONE`：IANA 时区，默认 `Asia/Shanghai`
 
-每天北京时间 **20:00**：
-
-```yaml
-schedule:
-  - cron: "0 20 * * *"
-    timezone: "Asia/Shanghai"
-```
-
-格式为：
-
-```text
-分钟 小时 * * *
-```
+修改后无需编辑工作流。实际启动时间可能晚于设定时间，但后续检查会持续补偿。
 
 ---
 

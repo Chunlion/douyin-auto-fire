@@ -86,7 +86,7 @@ def load_task(settings: Settings) -> TaskConfig:
         interval_min=interval_min,
         interval_max=interval_max,
         continue_on_error=raw.get("continue_on_error", True),
-        prevent_duplicates=raw.get("prevent_duplicates", False),
+        prevent_duplicates=_prevent_duplicates(raw.get("prevent_duplicates", False)),
         target_open_retries=target_open_retries,
         target_open_timeout_seconds=target_open_timeout_seconds,
     )
@@ -97,6 +97,13 @@ def load_task(settings: Settings) -> TaskConfig:
 
     _validate_stickers(task)
     return task
+
+
+def _prevent_duplicates(config_value: Any) -> Any:
+    override = os.getenv("DOUYIN_PREVENT_DUPLICATES")
+    if override is None or not override.strip():
+        return config_value
+    return _parse_bool(override, "DOUYIN_PREVENT_DUPLICATES")
 
 
 def parse_auth_json(value: str, label: str) -> Any:

@@ -109,6 +109,30 @@ def test_loads_simple_config(tmp_path: Path) -> None:
     assert task.targets[1].messages[0].content == "你好"
 
 
+def test_environment_can_force_duplicate_prevention(monkeypatch, tmp_path: Path) -> None:
+    path = write_config(
+        tmp_path,
+        {
+            "targets": [{"name": "好友A", "messages": [{"type": "text", "content": "你好"}]}],
+            "prevent_duplicates": False,
+        },
+    )
+    monkeypatch.setenv("DOUYIN_PREVENT_DUPLICATES", "true")
+
+    assert load_task(settings_for(path)).prevent_duplicates is True
+
+
+def test_rejects_invalid_duplicate_prevention_override(monkeypatch, tmp_path: Path) -> None:
+    path = write_config(
+        tmp_path,
+        {"targets": [{"name": "好友A", "messages": [{"type": "text", "content": "你好"}]}]},
+    )
+    monkeypatch.setenv("DOUYIN_PREVENT_DUPLICATES", "invalid")
+
+    with pytest.raises(ConfigError, match="DOUYIN_PREVENT_DUPLICATES"):
+        load_task(settings_for(path))
+
+
 def test_loads_target_open_retries_and_timeout(tmp_path: Path) -> None:
     path = write_config(
         tmp_path,

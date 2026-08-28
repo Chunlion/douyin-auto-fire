@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from contextlib import contextmanager
@@ -25,7 +26,12 @@ class History:
             raise ValueError(f"未知时区: {timezone}，请安装 tzdata 或修正配置") from exc
 
     def key(self, task_id: str, run_date: str, target: str, message_id: str) -> str:
-        return f"{task_id}:{run_date}:{target}:{message_id}"
+        legacy_key = f"{task_id}:{run_date}:{target}:{message_id}"
+        key = hashlib.sha256(f"{task_id}\0{run_date}\0{target}\0{message_id}".encode("utf-8")).hexdigest()
+        if legacy_key in self.entries and key not in self.entries:
+            self.entries[key] = self.entries.pop(legacy_key)
+            self._save()
+        return key
 
     def contains(self, key: str) -> bool:
         return key in self.entries
