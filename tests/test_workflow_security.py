@@ -30,3 +30,20 @@ def test_send_workflow_scopes_and_removes_secrets() -> None:
     }
     assert cleanup_step["if"] == "always()"
     assert steps.index(cleanup_step) < steps.index(named_steps["Upload redacted diagnostics"])
+
+
+def test_send_workflow_has_guarded_fallback_schedules() -> None:
+    content = WORKFLOW_PATH.read_text(encoding="utf-8")
+    workflow = yaml.safe_load(content)
+
+    assert content.count('timezone: "Asia/Shanghai"') == 5
+    for hour in (5, 6, 8, 10, 12):
+        assert f'cron: "24 {hour} * * *"' in content
+
+    guard = workflow["jobs"]["guard"]
+    send = workflow["jobs"]["send"]
+    assert guard["permissions"] == {"actions": "read", "contents": "read"}
+    assert send["needs"] == "guard"
+    assert send["if"] == "needs.guard.outputs.should_run == 'true'"
+    assert 'run["status"] == "completed"' in content
+    assert 'run["conclusion"] != "cancelled"' in content
