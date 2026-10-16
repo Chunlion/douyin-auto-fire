@@ -8,7 +8,7 @@ on:
         type: boolean
         default: false
   schedule:
-    - cron: "7,22,37,52 * * * *"
+    - cron: "8,23,38,53 * * * *"
 
 concurrency:
   group: douyin-daily-sender
@@ -50,13 +50,15 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           DUE: ${{ steps.schedule.outputs.due }}
           ALREADY_SENT: ${{ steps.marker.outputs.cache-hit }}
+          RUN_DATE: ${{ steps.schedule.outputs.run_date }}
+          SKIP_DATE: ${{ vars.DOUYIN_SCHEDULE_SKIP_DATE }}
         run: |
-          if [[ "$EVENT_NAME" != "schedule" || ("$DUE" == "true" && "$ALREADY_SENT" != "true") ]]; then
+          if [[ "$EVENT_NAME" != "schedule" || ("$DUE" == "true" && "$ALREADY_SENT" != "true" && "$RUN_DATE" != "$SKIP_DATE") ]]; then
             echo "should_run=true" >> "$GITHUB_OUTPUT"
             echo "执行发送"
           else
             echo "should_run=false" >> "$GITHUB_OUTPUT"
-            echo "未到计划时间或今天已经发送，跳过"
+            echo "未到计划时间、指定日期停发或今天已发送，跳过"
           fi
 
   send:
@@ -173,6 +175,9 @@ jobs:
           DINGTALK_WEBHOOK: ${{ secrets.DINGTALK_WEBHOOK }}
           DINGTALK_SECRET: ${{ secrets.DINGTALK_SECRET }}
           WECOM_WEBHOOK: ${{ secrets.WECOM_WEBHOOK }}
+          WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
+          WEBHOOK_HEADERS: ${{ secrets.WEBHOOK_HEADERS }}
+          WEBHOOK_TEMPLATE: ${{ secrets.WEBHOOK_TEMPLATE }}
         run: |
           if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.dry_run }}" == "true" ]]; then
             python run.py --dry-run

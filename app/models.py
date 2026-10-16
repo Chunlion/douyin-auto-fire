@@ -57,6 +57,9 @@ class Settings:
     dingtalk_webhook: str | None = None
     dingtalk_secret: str | None = None
     wecom_webhook: str | None = None
+    webhook_url: str | None = None
+    webhook_headers: dict[str, str] | None = None
+    webhook_template: str | None = None
 
 
 @dataclass(frozen=True)
