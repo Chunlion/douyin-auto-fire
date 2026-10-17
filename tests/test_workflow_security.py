@@ -45,7 +45,7 @@ def test_send_workflow_has_configurable_recovery_schedule() -> None:
     content = WORKFLOW_PATH.read_text(encoding="utf-8")
     workflow = yaml.safe_load(content)
 
-    assert 'cron: "8,23,38,53 * * * *"' in content
+    assert 'cron: "8-53/15 * * * *"' in content
     assert "vars.DOUYIN_SCHEDULE_TIME || '05:24'" in content
     assert "vars.DOUYIN_SCHEDULE_TIMEZONE || 'Asia/Shanghai'" in content
 
