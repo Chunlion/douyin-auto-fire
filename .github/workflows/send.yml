@@ -8,7 +8,7 @@ on:
         type: boolean
         default: false
   schedule:
-    - cron: "8,23,38,53 * * * *"
+    - cron: "23 19,21,23 * * *"
 
 concurrency:
   group: douyin-daily-sender
@@ -31,7 +31,7 @@ jobs:
         if: github.event_name == 'schedule'
         shell: bash
         env:
-          SCHEDULE_TIME: ${{ vars.DOUYIN_SCHEDULE_TIME || '05:24' }}
+          SCHEDULE_TIME: ${{ vars.DOUYIN_SCHEDULE_TIME || '03:23' }}
           SCHEDULE_TIMEZONE: ${{ vars.DOUYIN_SCHEDULE_TIMEZONE || 'Asia/Shanghai' }}
         run: |
           python scripts/schedule_gate.py --time "$SCHEDULE_TIME" --timezone "$SCHEDULE_TIMEZONE"
