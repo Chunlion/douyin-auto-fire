@@ -180,6 +180,7 @@ jobs:
           WEBHOOK_TEMPLATE: ${{ secrets.WEBHOOK_TEMPLATE }}
         run: |
           if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.dry_run }}" == "true" ]]; then
+            unset DINGTALK_WEBHOOK DINGTALK_SECRET WECOM_WEBHOOK WEBHOOK_URL WEBHOOK_HEADERS WEBHOOK_TEMPLATE
             python run.py --dry-run
           else
             python run.py
